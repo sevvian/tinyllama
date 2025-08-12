@@ -1,5 +1,5 @@
-# R29: This workflow is simplified to its core function: build from scratch and push.
-# ALL CACHING MECHANISMS HAVE BEEN REMOVED as per user instruction.
+# R30 (NEW): This workflow uses a robust "Airlock" method to guarantee a clean push.
+# It builds to a .tar file, then loads and pushes from that clean file.
 name: Build and Publish Docker Image to GHCR
 
 on:
@@ -28,16 +28,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # This is the simplest possible build and push step.
-      # It will be slower on each run, but it will be clean and predictable.
-      - name: Build and push Docker image (no cache)
+      # --- STEP 1: Build the image and export it to a clean .tar file ---
+      # This step builds the multi-stage Dockerfile but outputs ONLY the final stage
+      # to a tarball, physically excluding the 4GB builder layer.
+      - name: Build and export to local tarball
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
+          # Do NOT push to the registry.
+          push: false
+          # Do NOT load to the daemon.
+          load: false
+          # Export the final image to a tar file.
+          outputs: type=docker,dest=image.tar
+          # Define the tags that will be embedded in the tar file.
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-          # R29: All cache-from and cache-to lines have been removed.
-          # We also disable provenance to ensure the cleanest possible manifest.
-          provenance: false
+
+      # --- STEP 2: Load the clean image from the .tar file ---
+      # This loads ONLY the thin image into the runner's Docker daemon.
+      # The daemon now has no knowledge of the 4GB builder layer.
+      - name: Load image from tarball
+        run: docker load --input image.tar
+
+      # --- STEP 3: Push the clean image to the registry ---
+      # This push command will only see the thin image layers that were loaded
+      # from the tarball and will only push those to the registry.
+      - name: Push Docker image to GHCR
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
+          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
