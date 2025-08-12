@@ -1,7 +1,9 @@
 fastapi
 uvicorn[standard]
 pydantic
-# R22: We will use onnxruntime directly.
-onnxruntime
-# R22: Transformers is still needed for the tokenizer.
+# R19: optimum is needed to load the ONNX model graph.
+optimum[onnxruntime]
+# R21: transformers is needed for the tokenizer.
 transformers
+# R26: FIX - Add Jinja2, which is required by the tokenizer's apply_chat_template function.
+Jinja2
