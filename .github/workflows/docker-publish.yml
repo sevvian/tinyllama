@@ -1,5 +1,5 @@
-# R28 (NEW): Reverting to a single build-and-push step and disabling provenance
-# to ensure a clean and fast push of ONLY the final, thin image layers.
+# R29: This workflow is simplified to its core function: build from scratch and push.
+# ALL CACHING MECHANISMS HAVE BEEN REMOVED as per user instruction.
 name: Build and Publish Docker Image to GHCR
 
 on:
@@ -28,21 +28,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # R28: FIX - Use a single, unified step to build and push.
-      # This is the most reliable method.
-      - name: Build and push Docker image
+      # This is the simplest possible build and push step.
+      # It will be slower on each run, but it will be clean and predictable.
+      - name: Build and push Docker image (no cache)
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Push directly to the registry.
           push: true
-          # Define the tags for the image.
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-          # Still use the GHA cache for build performance.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # This is the key: Disable provenance to prevent linking build cache metadata
-          # to the final image manifest. This ensures a clean push.
+          # R29: All cache-from and cache-to lines have been removed.
+          # We also disable provenance to ensure the cleanest possible manifest.
           provenance: false
