@@ -1,5 +1,5 @@
-# R18: This is a multi-stage Dockerfile to create a thin, production-ready image.
-# R20: Added Pillow to the builder stage to fix the ImportError.
+# R18: Multi-stage Dockerfile.
+# R21: Simplified for the text-only SmolLM2 model.
 
 # --- Stage 1: The "Builder" ---
 # This stage downloads the original model and converts it to ONNX.
@@ -7,15 +7,13 @@ FROM python:3.10-slim as builder
 
 WORKDIR /builder
 
-# Install all libraries needed for the export process.
-# R20: FIX - Added Pillow, which is required by the Idefics3ImageProcessor.
-RUN pip install --no-cache-dir optimum[exporters] Pillow
+# Install libraries for the export process. This is simpler now.
+RUN pip install --no-cache-dir optimum[exporters]
 
 # Copy the export script into the builder stage
 COPY export_model.py .
 
-# Run the export script. This will download the original model, convert it,
-# and save the resulting .onnx files into the /onnx_model directory.
+# Run the export script.
 RUN python export_model.py
 
 
@@ -25,7 +23,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install only the lightweight runtime dependencies from the corrected requirements.txt
+# Install only the lightweight runtime dependencies.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
