@@ -1,4 +1,3 @@
-# R21: This script is updated to handle the text-only SmolLM2 model.
 import os
 from optimum.onnxruntime import ORTModelForCausalLM
 from transformers import AutoTokenizer
@@ -16,7 +15,6 @@ if __name__ == "__main__":
     print("Tokenizer saved successfully.")
 
     # 2. Load the original model and export it to ONNX format.
-    # We use ORTModelForCausalLM for text generation models.
     print(f"Loading and exporting model to ONNX format at '{EXPORT_PATH}'...")
     model = ORTModelForCausalLM.from_pretrained(MODEL_ID, export=True)
     
