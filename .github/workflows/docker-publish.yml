@@ -1,0 +1,46 @@
+# R4: GitHub Actions workflow to build the Docker image and push to GHCR.
+name: Build and Publish Docker Image to GHCR
+
+# Controls when the action will run.
+# This workflow runs on any push to the main branch.
+on:
+  push:
+    branches: [ "main" ]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel.
+jobs:
+  build-and-push-image:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    
+    # Grant GITHUB_TOKEN permissions to write packages
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Checks out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Log in to the GitHub Container Registry
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and push the Docker image
+      # This step uses the Dockerfile from the root of the repository
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          # Enable build cache to speed up subsequent builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
