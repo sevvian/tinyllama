@@ -1,9 +1,7 @@
 fastapi
 uvicorn[standard]
 pydantic
-# R17: New dependencies for the ONNX stack
-transformers
-torch
-onnx
+# R18: Only runtime dependencies are needed here.
 onnxruntime
+transformers # Still needed for the processor/tokenizer
 Pillow
