@@ -1,25 +1,24 @@
-# R18: This script handles the one-time conversion of the model to the ONNX format.
+# R21: This script is updated to handle the text-only SmolLM2 model.
 import os
-from optimum.onnxruntime import ORTModelForVision2Seq
-from transformers import AutoProcessor
+from optimum.onnxruntime import ORTModelForCausalLM
+from transformers import AutoTokenizer
 
-MODEL_ID = "HuggingFaceTB/SmolVLM-256M-Instruct"
+MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
 EXPORT_PATH = "/onnx_model"
 
 if __name__ == "__main__":
     print(f"--- Starting model export for '{MODEL_ID}' ---")
 
-    # 1. Load the processor and save it to the export directory.
-    # The runtime application will need this.
-    print(f"Loading and saving processor to '{EXPORT_PATH}'...")
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
-    processor.save_pretrained(EXPORT_PATH)
-    print("Processor saved successfully.")
+    # 1. Load the tokenizer (for text models) and save it.
+    print(f"Loading and saving tokenizer to '{EXPORT_PATH}'...")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer.save_pretrained(EXPORT_PATH)
+    print("Tokenizer saved successfully.")
 
-    # 2. Load the original model from Hugging Face and export it to ONNX format.
-    # The `export=True` flag tells optimum to perform the conversion.
+    # 2. Load the original model and export it to ONNX format.
+    # We use ORTModelForCausalLM for text generation models.
     print(f"Loading and exporting model to ONNX format at '{EXPORT_PATH}'...")
-    model = ORTModelForVision2Seq.from_pretrained(MODEL_ID, export=True)
+    model = ORTModelForCausalLM.from_pretrained(MODEL_ID, export=True)
     
     # 3. Save the exported ONNX model to the export directory.
     model.save_pretrained(EXPORT_PATH)
