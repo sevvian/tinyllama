@@ -1,9 +1,9 @@
-# R17, R18: This module now loads a local ONNX model that was exported during the build.
+# R21: This module is updated to load and run the local text-only SmolLM2 ONNX model.
 import json
 import os
 import logging
-from optimum.onnxruntime import ORTModelForVision2Seq
-from transformers import AutoProcessor
+from optimum.onnxruntime import ORTModelForCausalLM
+from transformers import AutoTokenizer
 
 # --- Basic Configuration ---
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
@@ -14,7 +14,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DEVICE = "cpu"
-# R18: The MODEL_ID is now a local path inside the container.
 LOCAL_MODEL_PATH = "./model"
 
 class MetadataParser:
@@ -56,25 +55,26 @@ Output:"""
             return
             
         logger.info("--- Starting ONNX Model Initialization from Local Files ---")
-        logger.info(f"Loading model and processor from path: {LOCAL_MODEL_PATH}")
+        logger.info(f"Loading model and tokenizer from path: {LOCAL_MODEL_PATH}")
         
         try:
-            # Load the processor and model from the local directory baked into the image.
-            self.processor = AutoProcessor.from_pretrained(LOCAL_MODEL_PATH)
-            self.model = ORTModelForVision2Seq.from_pretrained(LOCAL_MODEL_PATH, provider="CPUExecutionProvider")
+            # R21: Use AutoTokenizer for text-only models.
+            self.tokenizer = AutoTokenizer.from_pretrained(LOCAL_MODEL_PATH)
+            # R21: Use ORTModelForCausalLM for text-only models.
+            self.model = ORTModelForCausalLM.from_pretrained(LOCAL_MODEL_PATH, provider="CPUExecutionProvider")
             
             logger.info("SUCCESS: Local ONNX model loaded and ready.")
         except Exception as e:
             logger.critical("FATAL: An exception occurred during local ONNX model initialization.", exc_info=True)
             self.model = None
-            self.processor = None
+            self.tokenizer = None
         
         logger.info("--- ONNX Initialization Complete ---")
 
     def extract_metadata(self, title: str) -> dict:
-        if not self.model or not self.processor:
-            logger.error(f"Cannot process '{title}' because the model/processor is not available.")
-            return {"error": "Model/processor is not available."}
+        if not self.model or not self.tokenizer:
+            logger.error(f"Cannot process '{title}' because the model/tokenizer is not available.")
+            return {"error": "Model/tokenizer is not available."}
         
         if not title or not title.strip():
             return {"original_title": title, "error": "Input title is empty."}
@@ -91,13 +91,13 @@ Output:"""
         ]
 
         try:
-            prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
-            inputs = self.processor(text=prompt, return_tensors="pt").to(DEVICE)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(DEVICE)
 
             logger.debug("Generating response from ONNX model...")
-            generated_ids = self.model.generate(**inputs, max_new_tokens=512, eos_token_id=self.processor.tokenizer.eos_token_id)
+            generated_ids = self.model.generate(**inputs, max_new_tokens=512, eos_token_id=self.tokenizer.eos_token_id)
             
-            response_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            response_text = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
             logger.debug(f"Raw model response text: {response_text}")
 
             json_start = response_text.rfind('{')
