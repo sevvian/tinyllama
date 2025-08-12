@@ -1,5 +1,5 @@
-# R4, R5: Original workflow.
-# R27 (NEW): Separated build/cache from push to prevent "ghost layers" in the registry.
+# R28 (NEW): Reverting to a single build-and-push step and disabling provenance
+# to ensure a clean and fast push of ONLY the final, thin image layers.
 name: Build and Publish Docker Image to GHCR
 
 on:
@@ -28,28 +28,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # R27: FIX - Step 1: Build the image, load it locally, and export the cache. DO NOT PUSH.
-      - name: Build and cache Docker image
-        id: build_and_cache
+      # R28: FIX - Use a single, unified step to build and push.
+      # This is the most reliable method.
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Do not push to the registry in this step.
-          push: false
-          # Load the final image into the local Docker engine on the runner.
-          load: true
-          # Define the tags for the local image.
+          # Push directly to the registry.
+          push: true
+          # Define the tags for the image.
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-          # Still use the GHA cache for performance on subsequent runs.
+          # Still use the GHA cache for build performance.
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # R27: FIX - Step 2: Explicitly push the locally loaded image.
-      # This simple push command has no knowledge of the build cache and will only push
-      # the necessary layers for the final image.
-      - name: Push Docker image to GHCR
-        run: |
-          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
-          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
+          # This is the key: Disable provenance to prevent linking build cache metadata
+          # to the final image manifest. This ensures a clean push.
+          provenance: false
