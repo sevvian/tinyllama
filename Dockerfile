@@ -1,4 +1,5 @@
 # R18: This is a multi-stage Dockerfile to create a thin, production-ready image.
+# R20: Added Pillow to the builder stage to fix the ImportError.
 
 # --- Stage 1: The "Builder" ---
 # This stage downloads the original model and converts it to ONNX.
@@ -6,9 +7,9 @@ FROM python:3.10-slim as builder
 
 WORKDIR /builder
 
-# Install all libraries needed for the export process
-# We need torch for the original model and optimum for the conversion tool.
-RUN pip install --no-cache-dir transformers torch optimum[exporters]
+# Install all libraries needed for the export process.
+# R20: FIX - Added Pillow, which is required by the Idefics3ImageProcessor.
+RUN pip install --no-cache-dir optimum[exporters] Pillow
 
 # Copy the export script into the builder stage
 COPY export_model.py .
@@ -24,7 +25,7 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install only the lightweight runtime dependencies from requirements.txt
+# Install only the lightweight runtime dependencies from the corrected requirements.txt
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -32,7 +33,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ./app /app
 
 # Copy ONLY the exported ONNX model from the builder stage into our final image.
-# This is the key step that keeps the final image small.
 COPY --from=builder /onnx_model /app/model
 
 # Expose the port the application will run on
