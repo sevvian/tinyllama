@@ -1,10 +1,9 @@
 fastapi
 uvicorn[standard]
 pydantic
-# R19: Add optimum with the onnxruntime extra, as it's needed to load the model.
+# R19: optimum is needed to load the ONNX model.
 optimum[onnxruntime]
-# R19: Add torch, a core dependency for transformers and optimum.
+# R19: torch is a core dependency.
 torch
-# R17: For the processor/tokenizer.
+# R21: transformers is needed for the tokenizer.
 transformers
-Pillow
