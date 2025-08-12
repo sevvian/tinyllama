@@ -1,34 +1,26 @@
-# R4, R5: Corrected GitHub Actions workflow to build the Docker image and push to GHCR.
+# R4, R5: Original workflow.
+# R27 (NEW): Separated build/cache from push to prevent "ghost layers" in the registry.
 name: Build and Publish Docker Image to GHCR
 
-# Controls when the action will run.
-# This workflow runs on any push to the main branch.
 on:
   push:
     branches: [ "main" ]
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel.
 jobs:
   build-and-push-image:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
     
-    # Grant GITHUB_TOKEN permissions to write packages
     permissions:
       contents: read
       packages: write
 
     steps:
-      # Checks out your repository under $GITHUB_WORKSPACE, so your job can access it
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # R5: FIX - Add this step to set up Docker Buildx.
-      # This creates a builder instance with the necessary drivers to support GHA cache.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Log in to the GitHub Container Registry
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -36,16 +28,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build and push the Docker image
-      # This step uses the Dockerfile from the root of the repository
-      - name: Build and push
+      # R27: FIX - Step 1: Build the image, load it locally, and export the cache. DO NOT PUSH.
+      - name: Build and cache Docker image
+        id: build_and_cache
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: true
+          # Do not push to the registry in this step.
+          push: false
+          # Load the final image into the local Docker engine on the runner.
+          load: true
+          # Define the tags for the local image.
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-          # Enable build cache to speed up subsequent builds
+          # Still use the GHA cache for performance on subsequent runs.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # R27: FIX - Step 2: Explicitly push the locally loaded image.
+      # This simple push command has no knowledge of the build cache and will only push
+      # the necessary layers for the final image.
+      - name: Push Docker image to GHCR
+        run: |
+          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
+          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
