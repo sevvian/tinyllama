@@ -1,5 +1,6 @@
 # R1: Defines the FastAPI application and API endpoints.
 # R6: Added top-level logging for API requests.
+# R8: Fixed import error by changing relative import to absolute.
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -7,7 +8,9 @@ from pydantic import BaseModel
 from typing import List, Dict, Any
 import logging
 
-from .llm_parser import parser_instance # Import the singleton instance
+# R8: FIX - Changed from ".llm_parser" to "llm_parser".
+# This is now an absolute import that works correctly when uvicorn runs main.py.
+from llm_parser import parser_instance # Import the singleton instance
 
 # Get the logger instance configured in llm_parser
 logger = logging.getLogger(__name__)
