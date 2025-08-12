@@ -5,4 +5,4 @@ pydantic
 # optimum is needed to load the ONNX model graph.
 optimum[onnxruntime]
 # transformers is needed for the tokenizer.
-transformers``
+transformers
