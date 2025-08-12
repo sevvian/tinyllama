@@ -1,16 +1,16 @@
-# R1: This module contains the core logic for loading the LLM and parsing text.
-# R6, R7: Enhanced with detailed, configurable logging.
+# R1, R6, R7: Core logic with configurable logging.
+# R10: Reverted to TinyLlama model and Zephyr prompt.
+# R11: Added detailed diagnostic logging for model loading.
 import json
 import os
 import logging
 from llama_cpp import Llama
 
-# R7: Make logging level configurable via an environment variable.
-# Defaults to 'INFO' if not set.
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+# Set a detailed format for logs to be more informative.
 logging.basicConfig(
     level=LOG_LEVEL,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -18,11 +18,13 @@ logger = logging.getLogger(__name__)
 class MetadataParser:
     """
     A class to handle loading the LLM and extracting metadata from titles.
-    The model is loaded only once upon instantiation to save resources.
     """
     _instance = None
     
+    # R10: Reverted to the TinyLlama model path.
     MODEL_PATH = "./models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+    
+    # R10: Reverted to the Zephyr prompt template for TinyLlama.
     PROMPT_TEMPLATE = """<|system|>
 You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object.</s>
 <|user|>
@@ -39,7 +41,7 @@ Output:
   "release_group": null
 }}
 
-Text: "【高清剧集网发布 www.BPHDTV.com】外星也难民.第四季[全12集][简繁英字幕].Solar.Opposites.S04.2023.1080p.DSNP.WEB-DL.DDP5.1.H24-ZeroTV"
+Text: "【高清剧集网发布 www.BPHDTV.com】外星也难民.第四季[全12集][简繁英字幕].Solar.Opposites.S04.2023.1080p.DSNP.WEB-DL.DDP5.1.H264-ZeroTV"
 Output:
 {{
   "title": "Solar Opposites",
@@ -67,34 +69,56 @@ Output:
     def __init__(self):
         if hasattr(self, 'llm'):
             return
-            
-        logger.info("Initializing and loading LLM model... This may take a moment.")
+        
+        # R11: Add detailed diagnostic steps.
+        logger.info("--- Starting LLM Initialization ---")
+        
+        # Step 1: Verify the model file exists at the expected path.
+        logger.info(f"Verifying model file at path: {self.MODEL_PATH}")
+        if os.path.exists(self.MODEL_PATH):
+            logger.info("SUCCESS: Model file found.")
+        else:
+            logger.critical("FATAL: Model file NOT FOUND at the specified path.")
+            # Let's also log the contents of the /app and /app/models directories for debugging.
+            try:
+                app_dir_contents = os.listdir("/app")
+                models_dir_contents = os.listdir("/app/models")
+                logger.debug(f"Contents of /app: {app_dir_contents}")
+                logger.debug(f"Contents of /app/models: {models_dir_contents}")
+            except FileNotFoundError as e:
+                logger.error(f"Could not list directory contents: {e}")
+            self.llm = None
+            return
+
+        # Step 2: Attempt to load the model with clear start/end logs.
+        logger.info("Attempting to instantiate Llama model...")
         try:
             self.llm = Llama(
               model_path=self.MODEL_PATH,
               n_ctx=2048,
               n_threads=4,
               n_gpu_layers=0,
-              verbose=False # Turn off llama.cpp's native verbose logging to use our own
+              verbose=False # We use our own logging.
             )
-            logger.info("LLM Model loaded successfully.")
+            logger.info("SUCCESS: Llama model instantiated successfully.")
         except Exception as e:
-            logger.error(f"Failed to load LLM model: {e}")
+            # R11: Log the full exception with traceback to get the exact error.
+            logger.critical("FATAL: An exception occurred during Llama model instantiation.", exc_info=True)
             self.llm = None
+            return
+            
+        logger.info("--- LLM Initialization Complete ---")
 
     def extract_metadata(self, title: str) -> dict:
         if not self.llm:
+            logger.error(f"Cannot process '{title}' because LLM is not available.")
             return {"error": "LLM model is not available."}
         
         if not title or not title.strip():
             return {"original_title": title, "error": "Input title is empty."}
 
-        # R6: Log the title being processed.
         logger.info(f"Processing title: '{title}'")
-        
         prompt = self.PROMPT_TEMPLATE.format(title=title)
-        
-        # R7: Log the full prompt only at DEBUG level to avoid cluttering INFO logs.
         logger.debug(f"Generated prompt for LLM:\n{prompt}")
 
         try:
@@ -110,7 +134,6 @@ Output:
             if not response_text.endswith('}'):
                 response_text += "}"
             
-            # R7: Log the raw LLM output at DEBUG level.
             logger.debug(f"Raw LLM response text: {response_text}")
 
             json_start = response_text.find('{')
@@ -120,9 +143,7 @@ Output:
             parsed_json = json.loads(response_text)
             parsed_json['original_title'] = title
 
-            # R6: Log the successful outcome.
             logger.info(f"Successfully parsed metadata for title: '{title}'")
-            # R7: Log the actual parsed data at DEBUG level.
             logger.debug(f"Returning parsed JSON: {json.dumps(parsed_json)}")
 
             return parsed_json
@@ -131,7 +152,9 @@ Output:
             logger.error(f"Failed to decode JSON from LLM response for title '{title}'. Response was: {response_text}")
             return {"original_title": title, "error": "LLM returned malformed data."}
         except Exception as e:
-            logger.error(f"An unexpected error occurred during LLM inference for title '{title}': {e}")
+            logger.error(f"An unexpected error occurred during LLM inference for title '{title}': {e}", exc_info=True)
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
 
+logger.info("Creating MetadataParser instance...")
 parser_instance = MetadataParser()
+logger.info("MetadataParser instance created.")
