@@ -1,11 +1,16 @@
 # R1: Defines the FastAPI application and API endpoints.
+# R6: Added top-level logging for API requests.
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Dict, Any
+import logging
 
 from .llm_parser import parser_instance # Import the singleton instance
+
+# Get the logger instance configured in llm_parser
+logger = logging.getLogger(__name__)
 
 # Define the application
 app = FastAPI(
@@ -31,6 +36,10 @@ def extract_metadata_api(request: ExtractionRequest):
     Accepts a block of text with one title per line and returns extracted metadata for each.
     """
     titles = [title.strip() for title in request.titles.split('\n') if title.strip()]
+    
+    # R6: Log the incoming request details.
+    logger.info(f"Received API request to process {len(titles)} titles.")
+    
     results = [parser_instance.extract_metadata(title) for title in titles]
     return {"results": results}
 
