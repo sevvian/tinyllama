@@ -1,5 +1,9 @@
 fastapi
 uvicorn[standard]
-llama-cpp-python
-huggingface-hub
 pydantic
+# R17: New dependencies for the ONNX stack
+transformers
+torch
+onnx
+onnxruntime
+Pillow
