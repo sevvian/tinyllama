@@ -1,4 +1,5 @@
-# R12: Switched to the Qwen3-0.6B model and updated prompt/stop tokens accordingly.
+# R12: Switched to the Qwen3-0.6B model.
+# R13: Corrected the model path to match the actual downloaded filename.
 import json
 import os
 import logging
@@ -15,11 +16,10 @@ logger = logging.getLogger(__name__)
 class MetadataParser:
     _instance = None
     
-    # R12: FIX - Point to the new Qwen3 GGUF file. The filename is exact.
-    MODEL_PATH = "./models/unsloth_qwen3-0.6b-q4_k_s.gguf"
+    # R13: FIX - Point to the correct model filename.
+    MODEL_PATH = "./models/Qwen3-0.6B-Q4_K_S.gguf"
     
-    # R12: FIX - Update the prompt template to the "Qwen Chat" format.
-    # It uses <|im_start|> and <|im_end|> tokens.
+    # R12: Using the Qwen Chat prompt template.
     PROMPT_TEMPLATE = """<|im_start|>system
 You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object.<|im_end|>
 <|im_start|>user
@@ -105,7 +105,6 @@ Output:<|im_end|>
             output = self.llm(
               prompt,
               max_tokens=512,
-              # R12: FIX - Update stop tokens for the Qwen chat template.
               stop=["<|im_end|>", "}"],
               temperature=0.2,
               echo=False
