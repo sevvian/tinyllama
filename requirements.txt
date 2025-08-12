@@ -1,9 +1,8 @@
 fastapi
 uvicorn[standard]
 pydantic
-# R19: optimum is needed to load the ONNX model.
+# R22: Removing 'torch' from the runtime is the key to a small image.
+# optimum is needed to load the ONNX model graph.
 optimum[onnxruntime]
-# R19: torch is a core dependency.
-torch
-# R21: transformers is needed for the tokenizer.
-transformers
+# transformers is needed for the tokenizer.
+transformers``
