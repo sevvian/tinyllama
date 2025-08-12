@@ -1,13 +1,10 @@
-# R1, R6, R7: Core logic with configurable logging.
-# R10: Reverted to TinyLlama model and Zephyr prompt.
-# R11: Added detailed diagnostic logging for model loading.
+# R12: Switched to the Qwen3-0.6B model and updated prompt/stop tokens accordingly.
 import json
 import os
 import logging
 from llama_cpp import Llama
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
-# Set a detailed format for logs to be more informative.
 logging.basicConfig(
     level=LOG_LEVEL,
     format='%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s'
@@ -16,18 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 class MetadataParser:
-    """
-    A class to handle loading the LLM and extracting metadata from titles.
-    """
     _instance = None
     
-    # R10: Reverted to the TinyLlama model path.
-    MODEL_PATH = "./models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"
+    # R12: FIX - Point to the new Qwen3 GGUF file. The filename is exact.
+    MODEL_PATH = "./models/unsloth_qwen3-0.6b-q4_k_s.gguf"
     
-    # R10: Reverted to the Zephyr prompt template for TinyLlama.
-    PROMPT_TEMPLATE = """<|system|>
-You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object.</s>
-<|user|>
+    # R12: FIX - Update the prompt template to the "Qwen Chat" format.
+    # It uses <|im_start|> and <|im_end|> tokens.
+    PROMPT_TEMPLATE = """<|im_start|>system
+You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object.<|im_end|>
+<|im_start|>user
 Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
 Output:
 {{
@@ -56,9 +51,8 @@ Output:
 
 Now, process the following text:
 Text: "{title}"
-Output:
-</s>
-<|assistant|>
+Output:<|im_end|>
+<|im_start|>assistant
 """
 
     def __new__(cls, *args, **kwargs):
@@ -69,28 +63,16 @@ Output:
     def __init__(self):
         if hasattr(self, 'llm'):
             return
-        
-        # R11: Add detailed diagnostic steps.
+            
         logger.info("--- Starting LLM Initialization ---")
-        
-        # Step 1: Verify the model file exists at the expected path.
         logger.info(f"Verifying model file at path: {self.MODEL_PATH}")
         if os.path.exists(self.MODEL_PATH):
             logger.info("SUCCESS: Model file found.")
         else:
             logger.critical("FATAL: Model file NOT FOUND at the specified path.")
-            # Let's also log the contents of the /app and /app/models directories for debugging.
-            try:
-                app_dir_contents = os.listdir("/app")
-                models_dir_contents = os.listdir("/app/models")
-                logger.debug(f"Contents of /app: {app_dir_contents}")
-                logger.debug(f"Contents of /app/models: {models_dir_contents}")
-            except FileNotFoundError as e:
-                logger.error(f"Could not list directory contents: {e}")
             self.llm = None
             return
 
-        # Step 2: Attempt to load the model with clear start/end logs.
         logger.info("Attempting to instantiate Llama model...")
         try:
             self.llm = Llama(
@@ -98,15 +80,13 @@ Output:
               n_ctx=2048,
               n_threads=4,
               n_gpu_layers=0,
-              verbose=False # We use our own logging.
+              verbose=False
             )
             logger.info("SUCCESS: Llama model instantiated successfully.")
         except Exception as e:
-            # R11: Log the full exception with traceback to get the exact error.
             logger.critical("FATAL: An exception occurred during Llama model instantiation.", exc_info=True)
             self.llm = None
             return
-            
         logger.info("--- LLM Initialization Complete ---")
 
     def extract_metadata(self, title: str) -> dict:
@@ -125,7 +105,8 @@ Output:
             output = self.llm(
               prompt,
               max_tokens=512,
-              stop=["</s>", "}"],
+              # R12: FIX - Update stop tokens for the Qwen chat template.
+              stop=["<|im_end|>", "}"],
               temperature=0.2,
               echo=False
             )
