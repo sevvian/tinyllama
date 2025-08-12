@@ -1,4 +1,4 @@
-# R4: GitHub Actions workflow to build the Docker image and push to GHCR.
+# R4, R5: Corrected GitHub Actions workflow to build the Docker image and push to GHCR.
 name: Build and Publish Docker Image to GHCR
 
 # Controls when the action will run.
@@ -23,6 +23,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # R5: FIX - Add this step to set up Docker Buildx.
+      # This creates a builder instance with the necessary drivers to support GHA cache.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       # Log in to the GitHub Container Registry
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -39,8 +44,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
           # Enable build cache to speed up subsequent builds
           cache-from: type=gha
           cache-to: type=gha,mode=max
