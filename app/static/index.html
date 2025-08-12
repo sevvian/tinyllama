@@ -1,0 +1,68 @@
+<!-- R2: Simple UI frontend for user interaction -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Metadata Extractor</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>LLM Metadata Extractor</h1>
+        <p>Enter one or more media titles below (one per line). The LLM will extract the metadata for each.</p>
+        
+        <div class="form-container">
+            <textarea id="titles-input" rows="10" placeholder="e.g., A Ninja and an Assassin Under One Roof (2025) S01E04&#10;[apreder]Raffaello_Il_Principe_delle_Arti_in_3D(2017)DVB.mkv"></textarea>
+            <button id="extract-btn">Extract Metadata</button>
+        </div>
+
+        <h2>Results</h2>
+        <div class="results-container">
+            <pre id="results-output" class="language-json"><code>{ "status": "Awaiting input..." }</code></pre>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const extractBtn = document.getElementById('extract-btn');
+            const titlesInput = document.getElementById('titles-input');
+            const resultsOutput = document.querySelector('#results-output code');
+
+            extractBtn.addEventListener('click', async () => {
+                const titles = titlesInput.value;
+                if (!titles.trim()) {
+                    resultsOutput.textContent = JSON.stringify({ error: "Please enter at least one title." }, null, 2);
+                    return;
+                }
+
+                // Provide user feedback during processing
+                extractBtn.disabled = true;
+                extractBtn.textContent = 'Processing...';
+                resultsOutput.textContent = JSON.stringify({ status: "Sending to LLM..." }, null, 2);
+
+                try {
+                    const response = await fetch('/api/extract', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ titles: titles }),
+                    });
+
+                    const data = await response.json();
+                    resultsOutput.textContent = JSON.stringify(data.results, null, 2);
+
+                } catch (error) {
+                    console.error('Error:', error);
+                    resultsOutput.textContent = JSON.stringify({ error: "An error occurred while communicating with the API." }, null, 2);
+                } finally {
+                    // Restore button state
+                    extractBtn.disabled = false;
+                    extractBtn.textContent = 'Extract Metadata';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
