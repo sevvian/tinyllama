@@ -1,0 +1,2 @@
+onnx_model/*.onnx filter=lfs diff=lfs merge=lfs -text
+onnx_model/*.safetensors filter=lfs diff=lfs merge=lfs -text
