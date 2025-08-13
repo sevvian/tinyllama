@@ -1,0 +1,3 @@
+# Ignore the ONNX model directory to prevent accidental local commits.
+# This directory should only be managed by the 'build-onnx-model' workflow.
+/onnx_model/
