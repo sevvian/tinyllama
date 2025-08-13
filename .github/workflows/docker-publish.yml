@@ -1,5 +1,5 @@
 # This is the main, automated workflow for the application.
-# It now checks out the LFS files before building.
+# It checks out the LFS files and builds the final, thin image.
 name: Build and Publish Application Docker Image
 
 on:
@@ -15,8 +15,7 @@ jobs:
 
     steps:
       - name: Checkout repository with LFS
-        # The `lfs: true` flag is critical. It tells the checkout action
-        # to download the actual large model files from LFS storage.
+        # The `lfs: true` flag is critical to download the actual model files.
         uses: actions/checkout@v4
         with:
           lfs: true
