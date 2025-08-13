@@ -1,5 +1,3 @@
-# R8: Corrected import.
-# R26: Corrected the path for mounting the static directory.
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,13 +12,11 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="LLM Metadata Extractor",
     description="An API to extract metadata from media titles using a SmolLM2 ONNX model.",
-    version="2.0.0" # Version bump for the new ONNX stack
+    version="3.0.0" # Final Version
 )
 
 logger.info("FastAPI app starting up...")
 
-# R26: FIX - The directory path is now "static", relative to the WORKDIR /app.
-# This correctly resolves to /app/static.
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 class ExtractionRequest(BaseModel):
