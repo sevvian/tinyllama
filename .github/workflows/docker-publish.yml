@@ -1,5 +1,5 @@
 # This is the main, automated workflow for the application.
-# It runs on every push and uses the pre-built ONNX model from the repo.
+# It now checks out the LFS files before building.
 name: Build and Publish Application Docker Image
 
 on:
@@ -14,9 +14,12 @@ jobs:
       packages: write
 
     steps:
-      - name: Checkout repository
-        # This checkout will now include the 'onnx_model' directory.
+      - name: Checkout repository with LFS
+        # The `lfs: true` flag is critical. It tells the checkout action
+        # to download the actual large model files from LFS storage.
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -29,7 +32,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push final image
-        # This uses the simple, single-stage Dockerfile.
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -38,5 +40,4 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-          # No caching is needed as this build is fast and simple.
           provenance: false
