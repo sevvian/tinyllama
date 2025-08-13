@@ -1,5 +1,5 @@
 # This is the final, optimized workflow using a two-job "Airlock" process.
-# The slow builder job is now cached for performance.
+# It correctly downloads the artifact in the second job.
 name: Build and Publish Application Docker Image
 
 on:
@@ -17,24 +17,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # R47: FIX - Replace the simple 'docker build' with a cached build step.
       - name: Build the builder image with cache
         uses: docker/build-push-action@v5
         with:
-          # Point to the builder Dockerfile.
           file: ./Dockerfile.builder
-          # Give the image a tag so we can reference it locally.
           tags: onnx-builder:latest
-          # Do NOT push this image to the registry.
           push: false
-          # Load the built image into the runner's local Docker daemon.
           load: true
-          # Enable caching for this slow build step.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Create a temporary container from the builder
-        # This command now finds the 'onnx-builder:latest' image locally.
         run: docker create --name temp_builder onnx-builder
 
       - name: Copy the /onnx_model artifact from the container
@@ -46,7 +39,7 @@ jobs:
           name: onnx-model-artifact
           path: onnx_model
 
-  # --- JOB 2: BUILD AND PUSH THE FINAL, THIN IMAGE (NOT CACHED) ---
+  # --- JOB 2: BUILD AND PUSH THE FINAL, THIN IMAGE ---
   build_and_push_image:
     needs: build_artifact
     runs-on: ubuntu-latest
@@ -58,13 +51,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # R48: FIX - This is the critical missing step.
+      # Download the clean 'onnx_model' directory from the previous job's artifact.
       - name: Download the ONNX model artifact
         uses: actions/download-artifact@v4
         with:
           name: onnx-model-artifact
+          # Download it to the root of the workspace. This will create the 'onnx_model' directory.
           path: .
 
       - name: Verify downloaded artifact
+        # This 'ls' command will now succeed.
         run: ls -lR onnx_model
 
       - name: Set up Docker Buildx
@@ -78,7 +75,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push final image
-        # This step remains simple and cache-free.
         uses: docker/build-push-action@v5
         with:
           context: .
