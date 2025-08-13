@@ -1,8 +1,11 @@
-# R55: Updated transformers version for Qwen3 model compatibility.
+# R57: This is the minimal set of runtime dependencies, pinned to a compatible set.
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
 onnxruntime==1.18.1
+# This version matches the builder's version for compatibility.
 transformers==4.42.4
 Jinja2==3.1.4
 numpy==1.26.4
+# Pin protobuf as a transitive dependency to prevent conflicts.
+protobuf==4.25.3
