@@ -1,6 +1,5 @@
-# R35: This module uses the onnxruntime library directly.
-# R36 (NEW): Corrected the manual generation loop to provide the required 'position_ids'
-# and correctly formatted 'past_key_values' inputs to the ONNX model.
+# R37 (NEW): The entire generation logic is rewritten to correctly handle the ONNX model's
+# strict input requirements for past_key_values on the initial call.
 import json
 import os
 import logging
@@ -19,6 +18,7 @@ logger = logging.getLogger(__name__)
 LOCAL_MODEL_DIR = "./model"
 TOKENIZER_PATH = LOCAL_MODEL_DIR
 ONNX_MODEL_PATH = os.path.join(LOCAL_MODEL_DIR, "model.onnx")
+CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 
 class MetadataParser:
     _instance = None
@@ -36,7 +36,7 @@ Output:"""
   "source": "HDRip",
   "release_group": null
 }"""
-    FEW_SHOT_EXAMPLE_2_USER = """Text: "【高清剧集网发布 www.BPHDTV.com】外星也难民.第四季[全12集][简繁英字幕].Solar.Opposites.S04.2023.1080p.DSNP.WEB-DL.DDP5.1.H264-ZeroTV"
+    FEW_SHOT_EXAMPLE_2_USER = """Text: "【高清剧集网发布 www.BPHDTV.com】外星也難民.第四季[全12集][簡繁英字幕].Solar.Opposites.S04.2023.1080p.DSNP.WEB-DL.DDP5.1.H264-ZeroTV"
 Output:"""
     FEW_SHOT_EXAMPLE_2_ASSISTANT = """{
   "title": "Solar Opposites",
@@ -66,6 +66,13 @@ Output:"""
             
             logger.info(f"Loading ONNX model and creating inference session from: {ONNX_MODEL_PATH}")
             self.session = ort.InferenceSession(ONNX_MODEL_PATH, providers=["CPUExecutionProvider"])
+
+            # R37: Load model configuration to get parameters for KV cache shape.
+            with open(CONFIG_PATH, 'r') as f:
+                config = json.load(f)
+            self.num_heads = config["num_attention_heads"]
+            self.hidden_size = config["hidden_size"]
+            self.head_dim = self.hidden_size // self.num_heads
             
             logger.info("SUCCESS: Direct ONNX Runtime session created.")
         except Exception as e:
@@ -111,60 +118,80 @@ Output:"""
             logger.error(f"An unexpected error occurred during ONNX inference for title '{title}': {e}", exc_info=True)
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
 
-    # R36: This entire function is rewritten to be correct.
+    # R37: This function is completely rewritten to implement the correct two-phase generation.
     def run_generation(self, inputs):
-        """Helper function for the generation loop that correctly handles the ONNX model's specific inputs."""
+        """Runs autoregressive generation with the ONNX model, correctly handling the KV cache."""
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
         batch_size, sequence_length = input_ids.shape
 
-        # R36: FIX - Create the mandatory 'position_ids' input.
-        position_ids = numpy.arange(sequence_length, dtype=numpy.int64).reshape(1, sequence_length)
-
-        # Get the names of all expected inputs, including the split KV cache.
+        # Get the names of all expected inputs from the ONNX model.
         input_names = [inp.name for inp in self.session.get_inputs()]
         pkv_input_names = [name for name in input_names if 'past_key_values' in name]
+        output_names = [out.name for out in self.session.get_outputs()]
+
+        # --- Phase 1: Process the entire prompt at once ---
         
-        # Initialize the past_key_values as empty. This is the first pass.
-        past_key_values = None
-        
-        generated_tokens = []
+        # Create the 'position_ids' for the initial prompt.
+        position_ids = numpy.arange(sequence_length, dtype=numpy.int64).reshape(batch_size, sequence_length)
+
+        # Create empty placeholder 'past_key_values' for the first run.
+        # Shape is (batch_size, num_heads, sequence_length=0, head_dim).
+        empty_past = [numpy.zeros((batch_size, self.num_heads, 0, self.head_dim), dtype=numpy.float32) for _ in pkv_input_names]
+
+        ort_inputs = {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'position_ids': position_ids,
+        }
+        # Add the empty placeholders to the input feed.
+        for i, name in enumerate(pkv_input_names):
+            ort_inputs[name] = empty_past[i]
+
+        # Run the first pass.
+        ort_outs = self.session.run(output_names, ort_inputs)
+        logits = ort_outs[0]
+        past_key_values = ort_outs[1:] # This is now the populated KV cache for the prompt.
+
+        # Get the very first generated token.
+        next_token_id = numpy.argmax(logits[:, -1, :], axis=-1).reshape((batch_size, 1))
+        generated_tokens = [next_token_id[0, 0]]
+
+        # --- Phase 2: Generate subsequent tokens one by one ---
+
         max_new_tokens = 512
         eos_token_id = self.tokenizer.eos_token_id
 
-        for _ in range(max_new_tokens):
+        for _ in range(max_new_tokens - 1):
+            if generated_tokens[-1] == eos_token_id:
+                break
+
+            # For the next step, the input is just the new token.
+            input_ids = next_token_id
+            
+            # The position is the length of the sequence so far.
+            position_ids = numpy.array([[sequence_length]], dtype=numpy.int64)
+            sequence_length += 1
+            
+            # The attention mask must be extended.
+            attention_mask = numpy.concatenate([attention_mask, numpy.ones((batch_size, 1), dtype=numpy.int64)], axis=1)
+
             ort_inputs = {
                 'input_ids': input_ids,
                 'attention_mask': attention_mask,
                 'position_ids': position_ids,
             }
+            # Add the KV cache from the *previous* step.
+            for i, name in enumerate(pkv_input_names):
+                ort_inputs[name] = past_key_values[i]
             
-            # R36: FIX - Correctly handle the past_key_values format.
-            if past_key_values is not None:
-                # On subsequent runs, we provide the KV cache from the previous step.
-                for i, name in enumerate(pkv_input_names):
-                    ort_inputs[name] = past_key_values[i]
-
-            output_names = [out.name for out in self.session.get_outputs()]
+            # Run inference for the single new token.
             ort_outs = self.session.run(output_names, ort_inputs)
-            
             logits = ort_outs[0]
-            # The new KV cache is the rest of the outputs.
-            past_key_values = ort_outs[1:]
+            past_key_values = ort_outs[1:] # Update the cache for the next round.
 
-            # Get the next token by finding the highest logit.
-            next_token_id = numpy.argmax(logits[:, -1, :], axis=-1).reshape((batch_size, 1))
-            generated_tokens.append(next_token_id[0,0])
-
-            if next_token_id[0,0] == eos_token_id:
-                break
-
-            # Prepare inputs for the *next* iteration.
-            input_ids = next_token_id
-            # Update attention mask to include the new token.
-            attention_mask = numpy.concatenate([attention_mask, numpy.ones((batch_size, 1), dtype=numpy.int64)], axis=1)
-            # R36: FIX - The position_id for the next token is just the current sequence length.
-            position_ids = numpy.array([[attention_mask.shape[1] - 1]], dtype=numpy.int64)
+            next_token_id = numpy.argmax(logits, axis=-1).reshape((batch_size, 1))
+            generated_tokens.append(next_token_id[0, 0])
 
         return [inputs['input_ids'][0].tolist() + generated_tokens]
 
