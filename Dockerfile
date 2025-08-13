@@ -9,7 +9,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ .
 COPY onnx_model /app/model
 
-# R31: Set environment variables for ONNX Runtime performance tuning on the N5105 CPU.
 ENV OMP_NUM_THREADS=4
 ENV OMP_WAIT_POLICY=PASSIVE
 
