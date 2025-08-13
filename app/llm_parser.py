@@ -1,6 +1,6 @@
 # This is the final, definitive version of the parser.
-# It reverts to the simple, effective prompt and generation logic from the
-# known working version ("R38"), while keeping the robust loading and parsing improvements.
+# It uses a more direct prompt with targeted examples to handle specific
+# edge cases and improve overall accuracy.
 import json
 import os
 import logging
@@ -20,8 +20,8 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 class MetadataParser:
     _instance = None
     
-    # R53: Reverted to the simple, effective prompt from the working version.
-    PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object."""
+    # R54: The system instruction is now more direct, as requested.
+    PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. Pay close attention to patterns like S01E04 for season/episode, 720p for resolution, and languages in brackets. If a field is not present, its value must be null. Respond with ONLY the JSON object."""
     
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
 Output:"""
@@ -48,6 +48,33 @@ Output:"""
   "release_group": "apreder"
 }"""
 
+    # R54: Add new, targeted examples to fix specific failure cases.
+    FEW_SHOT_EXAMPLE_3_USER = """Text: "Nip/Tuck (2003) S06"
+Output:"""
+    FEW_SHOT_EXAMPLE_3_ASSISTANT = """{
+  "title": "Nip/Tuck",
+  "year": 2003,
+  "season": 6,
+  "episode": null,
+  "resolution": null,
+  "audio_language": null,
+  "source": null,
+  "release_group": null
+}"""
+    FEW_SHOT_EXAMPLE_4_USER = """Text: "A Ninja and an Assassin Under One Roof / 忍者と殺し屋のふたりぐらし (2025) S01E04"
+Output:"""
+    FEW_SHOT_EXAMPLE_4_ASSISTANT = """{
+  "title": "A Ninja and an Assassin Under One Roof / 忍者と殺し屋のふたりぐらし",
+  "year": 2025,
+  "season": 1,
+  "episode": 4,
+  "resolution": null,
+  "audio_language": null,
+  "source": null,
+  "release_group": null
+}"""
+
+
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
             cls._instance = super(MetadataParser, cls).__new__(cls, *args, **kwargs)
@@ -62,7 +89,6 @@ Output:"""
             logger.info(f"Loading tokenizer from path: {TOKENIZER_PATH}")
             self.tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
             
-            # Keep the improved AutoConfig loader.
             logger.info(f"Loading model config from path: {CONFIG_PATH}")
             config = AutoConfig.from_pretrained(CONFIG_PATH)
             self.num_heads = config.num_key_value_heads 
@@ -87,13 +113,17 @@ Output:"""
         if not self.session or not self.tokenizer:
             return {"error": "Model/tokenizer is not available."}
 
-        # Use the simple, effective two-shot prompt.
+        # R54: Add the new examples to the prompt context.
         messages = [
             {"role": "system", "content": self.PROMPT_SYSTEM_INSTRUCTION},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_1_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_1_ASSISTANT},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_2_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_2_ASSISTANT},
+            {"role": "user", "content": self.FEW_SHOT_EXAMPLE_3_USER},
+            {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_3_ASSISTANT},
+            {"role": "user", "content": self.FEW_SHOT_EXAMPLE_4_USER},
+            {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_4_ASSISTANT},
             {"role": "user", "content": f'Text: "{title}"\nOutput:'}
         ]
 
@@ -109,7 +139,6 @@ Output:"""
             response_text = self.tokenizer.decode(newly_generated_ids, skip_special_tokens=True)
             logger.debug(f"Cleaned model response text: {response_text}")
             
-            # Keep the improved, robust JSON parsing.
             clean_response = response_text.strip()
             if clean_response and clean_response.startswith('{') and clean_response.endswith('}'):
                 parsed_json = json.loads(clean_response)
@@ -123,7 +152,6 @@ Output:"""
             logger.error(f"An unexpected error occurred during ONNX inference for title '{title}': {e}", exc_info=True)
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
 
-    # R53: Reverted to the simple, deterministic generation logic from the working version.
     def run_generation(self, inputs):
         """Runs autoregressive generation with the ONNX model, correctly handling the KV cache."""
         input_ids = inputs['input_ids']
