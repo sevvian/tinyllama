@@ -1,11 +1,11 @@
-# R58: This is the minimal set of runtime dependencies, pinned to a compatible set.
+# R59: This is the minimal set of runtime dependencies, pinned to a recent, compatible set.
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
 onnxruntime==1.18.1
-# R58: This version matches the builder's version for compatibility.
+# R59: Pinning to a very recent version that is known to support Qwen3.
 transformers==4.52.0
 Jinja2==3.1.4
 numpy==1.26.4
-# R58: Pinning a known-good version of protobuf to prevent conflicts.
+# R59: Pinning a known-good version of protobuf to prevent conflicts.
 protobuf==4.25.3
