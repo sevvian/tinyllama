@@ -1,11 +1,11 @@
-# R57: This is the minimal set of runtime dependencies, pinned to a compatible set.
+# R58: This is the minimal set of runtime dependencies, pinned to a compatible set.
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
 onnxruntime==1.18.1
-# This version matches the builder's version for compatibility.
-transformers==4.42.4
+# R58: This version matches the builder's version for compatibility.
+transformers==4.52.0
 Jinja2==3.1.4
 numpy==1.26.4
-# Pin protobuf as a transitive dependency to prevent conflicts.
+# R58: Pinning a known-good version of protobuf to prevent conflicts.
 protobuf==4.25.3
