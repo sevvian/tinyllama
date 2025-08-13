@@ -1,28 +1,26 @@
-# R40 (NEW): The quantization configuration is now created explicitly to make the
-# INT8 setting clear and verifiable, directly addressing user feedback.
+# R41 (NEW): Corrected the MODEL_ID typo and removed revision pinning as per user instruction.
 import os
 import shutil
 from optimum.onnxruntime import ORTModelForCausalLM, ORTQuantizer
-# R40: Import the main QuantizationConfig class directly.
 from optimum.onnxruntime.configuration import QuantizationConfig
-# R40: Import the specific enums needed for explicit configuration.
 from onnxruntime.quantization import QuantFormat, QuantizationMode, QuantType
 from transformers import AutoTokenizer, GenerationConfig
 
-# R29: Pin the model to the correct, latest revision.
-MODEL_ID = "HuggingFaceTB/SmolLM2-1M-Instruct"
-REVISION = "a91318be21aeaf0879874faa161dcb40c68847e9"
+# R41: FIX - Corrected the model name from '1M' to '135M'.
+MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
+# R41: FIX - Removed the REVISION pinning to always use the latest version.
 
 # Define paths
 TEMP_ONNX_PATH = "/tmp/onnx_export"
 FINAL_EXPORT_PATH = "/onnx_model"
 
 if __name__ == "__main__":
-    print(f"--- Starting model preparation for '{MODEL_ID}' @ revision '{REVISION}' ---")
+    print(f"--- Starting model preparation for '{MODEL_ID}' (latest from main branch) ---")
     
     # --- Step 1: Export the base model to ONNX format ---
     print(f"\n1. Exporting base model to temporary ONNX path: {TEMP_ONNX_PATH}")
-    onnx_model = ORTModelForCausalLM.from_pretrained(MODEL_ID, revision=REVISION, export=True)
+    # The 'revision' parameter has been removed from this call.
+    onnx_model = ORTModelForCausalLM.from_pretrained(MODEL_ID, export=True)
     onnx_model.save_pretrained(TEMP_ONNX_PATH)
     print("Base ONNX export complete.")
 
@@ -30,15 +28,13 @@ if __name__ == "__main__":
     print("\n2. Performing explicit INT8 dynamic quantization...")
     quantizer = ORTQuantizer.from_pretrained(TEMP_ONNX_PATH)
     
-    # R40: FIX - Manually and explicitly create the quantization configuration.
-    # This makes it clear we are following the expert's "INT8 dynamic" advice.
     dqconfig = QuantizationConfig(
-        is_static=False,  # This specifies DYNAMIC quantization.
-        format=QuantFormat.QOperator, # Standard format for dynamic quantization on CPU.
-        mode=QuantizationMode.IntegerOps, # Standard mode for dynamic quantization.
-        weights_dtype=QuantType.QInt8, # Explicitly set weights to SIGNED 8-BIT INTEGER.
-        activations_dtype=QuantType.QUInt8, # Explicitly set activations to UNSIGNED 8-BIT INTEGER.
-        operators_to_quantize=["MatMul"] # Quantize the most impactful operators.
+        is_static=False,
+        format=QuantFormat.QOperator,
+        mode=QuantizationMode.IntegerOps,
+        weights_dtype=QuantType.QInt8,
+        activations_dtype=QuantType.QUInt8,
+        operators_to_quantize=["MatMul"]
     )
 
     os.makedirs(FINAL_EXPORT_PATH, exist_ok=True)
@@ -52,8 +48,9 @@ if __name__ == "__main__":
 
     # --- Step 3: Save only the necessary tokenizer and config files ---
     print("\n3. Saving necessary tokenizer and config files...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=REVISION)
-    generation_config = GenerationConfig.from_pretrained(MODEL_ID, revision=REVISION)
+    # The 'revision' parameter has been removed from these calls.
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    generation_config = GenerationConfig.from_pretrained(MODEL_ID)
     
     tokenizer.save_pretrained(FINAL_EXPORT_PATH)
     generation_config.save_pretrained(FINAL_EXPORT_PATH)
