@@ -1,3 +1,7 @@
-# R55: Updated transformers version for Qwen3 model compatibility.
+# R57: These are the dependencies for the builder stage.
+# The versions are now pinned to a compatible set for the Qwen3 model.
 optimum[exporters]==1.20.0
+# Qwen3 requires a very recent version of transformers.
 transformers==4.42.4
+# Pin protobuf as a transitive dependency to prevent conflicts.
+protobuf==4.25.3
