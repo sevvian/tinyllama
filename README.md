@@ -1,12 +1,12 @@
 # LLM-Powered Metadata Extractor
 
-This   application uses a lightweight, quantized Large Language Model (`TinyLlama-1.1B-Chat`) to extract metadata from media file titles.
+This   application uses a lightweight, quantized Large Language Model (`SMolLm2-135M-Instruct`) to extract metadata from media file titles.
 
 The application is served via a FastAPI backend and has a simple web UI for interaction. It is designed to run in a low-resource, CPU-only environment (< 2GB RAM) via Docker.
 
 ## Features
 
-- **API Endpoint**: A `/api/extract` endpoint to process titles programmatically.
+- **API Endpoint**: A `/api/extract` endpoint to process titles programmatically .
 - **Web UI**: A simple interface to paste titles and see the extracted JSON output.
 - **LLM-Powered**: Uses a quantized TinyLlama model for flexible and robust pattern recognition.
 - **Dockerized**: Comes with a `Dockerfile` for easy deployment.
