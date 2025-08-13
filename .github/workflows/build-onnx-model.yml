@@ -2,7 +2,6 @@
 # It builds the model and commits the files back to the repository.
 name: Build and Commit ONNX Model
 
-# This makes the workflow manually triggerable from the GitHub Actions UI.
 on:
   workflow_dispatch:
 
@@ -10,7 +9,6 @@ jobs:
   build-and-commit:
     runs-on: ubuntu-latest
     
-    # Grant permissions to write back to the repository.
     permissions:
       contents: write
 
@@ -19,26 +17,39 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-build-action@v3
 
       - name: Build the builder image
-        # We build the builder Dockerfile which creates the /onnx_model directory.
         run: docker build -f Dockerfile.builder -t onnx-builder .
 
       - name: Create a temporary container from the builder
-        # We create a container so we can copy the files out of it.
         run: docker create --name temp_builder onnx-builder
 
       - name: Copy the /onnx_model artifact from the container
-        # We extract the finished product to a local directory.
-        # We name the directory 'onnx_model' to be clear.
+        # We copy the files to a directory named 'onnx_model' in the root of the repo.
         run: docker cp temp_builder:/onnx_model ./onnx_model
 
+      # --- NEW DIAGNOSTIC AND FIX STEPS ---
+
+      - name: Verify that files were copied
+        # This step will show us the exact contents of the new directory.
+        run: |
+          echo "Listing contents of ./onnx_model:"
+          ls -lR ./onnx_model
+
+      - name: Configure Git User
+        # The runner needs an identity to make a commit.
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Add files to commit
+        # Explicitly add the new directory to Git's staging area.
+        run: git add onnx_model
+
       - name: Commit and push the ONNX model files
+        # This action will now find the staged files and commit them.
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "feat: Add pre-built ONNX model files"
-          # The directory to add to the commit.
-          file_pattern: onnx_model/*
-          # The branch to push to.
-          branch: main
+          # We no longer need file_pattern because we used `git add` explicitly.
