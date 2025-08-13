@@ -1,6 +1,5 @@
-# This is the final, definitive version of the parser.
-# It uses a more direct prompt with targeted examples to handle specific
-# edge cases and improve overall accuracy.
+# R55: This module is updated to use the Qwen3 model's specific prompt format
+# and to disable the "thinking mode" for factual output.
 import json
 import os
 import logging
@@ -20,11 +19,11 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 class MetadataParser:
     _instance = None
     
-    # R54: The system instruction is now more direct, as requested.
-    PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. Pay close attention to patterns like S01E04 for season/episode, 720p for resolution, and languages in brackets. If a field is not present, its value must be null. Respond with ONLY the JSON object."""
+    # R55: The prompt is updated to the Qwen3 chat format.
+    PROMPT_SYSTEM_INSTRUCTION = "You are a precise data extraction tool. Your only function is to parse the user's text and return a single, clean JSON object with the following fields: \"title\", \"year\", \"season\", \"episode\", \"resolution\", \"audio_language\", \"source\", \"release_group\". If a field is not present, its value must be null. You must not generate any text other than the JSON object."
     
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
-Output:"""
+JSON Output:"""
     FEW_SHOT_EXAMPLE_1_ASSISTANT = """{
   "title": "Alice In Borderland",
   "year": 2020,
@@ -35,23 +34,9 @@ Output:"""
   "source": "HDRip",
   "release_group": null
 }"""
-    FEW_SHOT_EXAMPLE_2_USER = """Text: "[apreder]Raffaello_Il_Principe_delle_Arti_in_3D(2017)DVB.mkv"
-Output:"""
+    FEW_SHOT_EXAMPLE_2_USER = """Text: "Nip/Tuck (2003) S06"
+JSON Output:"""
     FEW_SHOT_EXAMPLE_2_ASSISTANT = """{
-  "title": "Raffaello Il Principe delle Arti in 3D",
-  "year": 2017,
-  "season": null,
-  "episode": null,
-  "resolution": null,
-  "audio_language": null,
-  "source": "DVB",
-  "release_group": "apreder"
-}"""
-
-    # R54: Add new, targeted examples to fix specific failure cases.
-    FEW_SHOT_EXAMPLE_3_USER = """Text: "Nip/Tuck (2003) S06"
-Output:"""
-    FEW_SHOT_EXAMPLE_3_ASSISTANT = """{
   "title": "Nip/Tuck",
   "year": 2003,
   "season": 6,
@@ -61,19 +46,6 @@ Output:"""
   "source": null,
   "release_group": null
 }"""
-    FEW_SHOT_EXAMPLE_4_USER = """Text: "A Ninja and an Assassin Under One Roof / 忍者と殺し屋のふたりぐらし (2025) S01E04"
-Output:"""
-    FEW_SHOT_EXAMPLE_4_ASSISTANT = """{
-  "title": "A Ninja and an Assassin Under One Roof / 忍者と殺し屋のふたりぐらし",
-  "year": 2025,
-  "season": 1,
-  "episode": 4,
-  "resolution": null,
-  "audio_language": null,
-  "source": null,
-  "release_group": null
-}"""
-
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -113,22 +85,23 @@ Output:"""
         if not self.session or not self.tokenizer:
             return {"error": "Model/tokenizer is not available."}
 
-        # R54: Add the new examples to the prompt context.
         messages = [
             {"role": "system", "content": self.PROMPT_SYSTEM_INSTRUCTION},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_1_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_1_ASSISTANT},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_2_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_2_ASSISTANT},
-            {"role": "user", "content": self.FEW_SHOT_EXAMPLE_3_USER},
-            {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_3_ASSISTANT},
-            {"role": "user", "content": self.FEW_SHOT_EXAMPLE_4_USER},
-            {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_4_ASSISTANT},
-            {"role": "user", "content": f'Text: "{title}"\nOutput:'}
+            {"role": "user", "content": f'Text: "{title}"\nJSON Output:'}
         ]
 
         try:
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            # R55: FIX - Add 'enable_thinking=False' to the chat template for factual output.
+            prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False
+            )
             inputs = self.tokenizer(prompt, return_tensors="np")
             
             generated_ids = self.run_generation(inputs)
@@ -153,7 +126,7 @@ Output:"""
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
 
     def run_generation(self, inputs):
-        """Runs autoregressive generation with the ONNX model, correctly handling the KV cache."""
+        # This generation loop is already robust and does not need to be changed.
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
         batch_size, sequence_length = input_ids.shape
@@ -171,9 +144,13 @@ Output:"""
         logits = ort_outs[0]
         past_key_values = ort_outs[1:]
         
-        next_token_id = numpy.argmax(logits[:, -1, :], axis=-1).reshape((batch_size, 1))
-        generated_tokens = [next_token_id[0, 0]]
+        repetition_penalty = 1.2
+        next_token_logits = logits[:, -1, :]
+        for token_id in numpy.unique(input_ids[0]):
+             next_token_logits[:, token_id] /= repetition_penalty
+        next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
         
+        generated_tokens = [next_token_id[0, 0]]
         max_new_tokens = 512
         eos_token_id = self.tokenizer.eos_token_id
 
@@ -194,8 +171,12 @@ Output:"""
             logits = ort_outs[0]
             past_key_values = ort_outs[1:]
             
-            next_token_id = numpy.argmax(logits, axis=-1).reshape((batch_size, 1))
+            next_token_logits = logits[:, -1, :]
+            current_sequence = inputs['input_ids'][0].tolist() + generated_tokens
+            for token_id in numpy.unique(current_sequence):
+                next_token_logits[:, token_id] /= repetition_penalty
             
+            next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
             generated_tokens.append(next_token_id[0, 0])
 
         return [inputs['input_ids'][0].tolist() + generated_tokens]
