@@ -1,5 +1,4 @@
-# This is the final, optimized workflow using a two-job "Airlock" process.
-# It correctly downloads the artifact in the second job.
+# This is the main, automated workflow. It downloads the model from a GitHub Release.
 name: Build and Publish Application Docker Image
 
 on:
@@ -7,41 +6,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  # --- JOB 1: BUILD THE ONNX MODEL ARTIFACT (CACHED) ---
-  build_artifact:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build the builder image with cache
-        uses: docker/build-push-action@v5
-        with:
-          file: ./Dockerfile.builder
-          tags: onnx-builder:latest
-          push: false
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Create a temporary container from the builder
-        run: docker create --name temp_builder onnx-builder
-
-      - name: Copy the /onnx_model artifact from the container
-        run: docker cp temp_builder:/onnx_model ./onnx_model
-
-      - name: Upload the ONNX model as an artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: onnx-model-artifact
-          path: onnx_model
-
-  # --- JOB 2: BUILD AND PUSH THE FINAL, THIN IMAGE ---
-  build_and_push_image:
-    needs: build_artifact
+  build-and-push-image:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,17 +16,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # R48: FIX - This is the critical missing step.
-      # Download the clean 'onnx_model' directory from the previous job's artifact.
-      - name: Download the ONNX model artifact
-        uses: actions/download-artifact@v4
+      - name: Download the ONNX model from the latest release
+        # This action finds the latest release and downloads our specific asset.
+        uses: dsaltares/fetch-gh-release-asset@1.1.0
         with:
-          name: onnx-model-artifact
-          # Download it to the root of the workspace. This will create the 'onnx_model' directory.
-          path: .
+          repo: ${{ github.repository }}
+          version: "latest" # Always get the latest release
+          file: "onnx_model.tar.gz"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract the model tarball
+        run: tar -xzvf onnx_model.tar.gz
 
       - name: Verify downloaded artifact
-        # This 'ls' command will now succeed.
         run: ls -lR onnx_model
 
       - name: Set up Docker Buildx
