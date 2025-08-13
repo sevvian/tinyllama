@@ -1,15 +1,19 @@
-# This is the final, guaranteed workflow using a two-job "Airlock" process.
-# It physically separates the build artifact from the final image build.
-name: Build and Publish Docker Image to GHCR
+# This workflow is for a one-time, manual build of the ONNX model.
+# It builds the model and commits the files back to the repository.
+name: Build and Commit ONNX Model
 
+# This makes the workflow manually triggerable from the GitHub Actions UI.
 on:
-  push:
-    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  # --- JOB 1: BUILD THE ONNX MODEL ARTIFACT ---
-  build_artifact:
+  build-and-commit:
     runs-on: ubuntu-latest
+    
+    # Grant permissions to write back to the repository.
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -18,8 +22,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build the builder image
-        # We build the builder image but do not push it.
-        # We give it a unique tag to reference it in the next step.
+        # We build the builder Dockerfile which creates the /onnx_model directory.
         run: docker build -f Dockerfile.builder -t onnx-builder .
 
       - name: Create a temporary container from the builder
@@ -27,57 +30,15 @@ jobs:
         run: docker create --name temp_builder onnx-builder
 
       - name: Copy the /onnx_model artifact from the container
-        # This is the key step: we extract the finished product.
-        run: docker cp temp_builder:/onnx_model ./onnx_model_artifact
+        # We extract the finished product to a local directory.
+        # We name the directory 'onnx_model' to be clear.
+        run: docker cp temp_builder:/onnx_model ./onnx_model
 
-      - name: Upload the ONNX model as an artifact
-        # We save the extracted folder as a GitHub Actions artifact.
-        uses: actions/upload-artifact@v4
+      - name: Commit and push the ONNX model files
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          name: onnx-model
-          path: onnx_model_artifact
-
-  # --- JOB 2: BUILD AND PUSH THE FINAL, THIN IMAGE ---
-  build_and_push_image:
-    # This job will only run after the artifact is successfully built.
-    needs: build_artifact
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download the ONNX model artifact
-        # We download the clean artifact from the previous job.
-        uses: actions/download-artifact@v4
-        with:
-          name: onnx-model
-          path: .
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push final image
-        # We now build the final, single-stage Dockerfile.
-        # The COPY command inside it will find the downloaded artifact.
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          # The Dockerfile to use is the simple, single-stage one.
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-          # No caching is needed here as the build is simple and fast.
-          provenance: false
+          commit_message: "feat: Add pre-built ONNX model files"
+          # The directory to add to the commit.
+          file_pattern: onnx_model/*
+          # The branch to push to.
+          branch: main
