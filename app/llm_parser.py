@@ -1,6 +1,5 @@
 # This is the final, definitive version of the parser.
-# It uses onnxruntime directly, includes the correct generation loop,
-# and has a robust safety check to prevent JSONDecodeError.
+# It adds a repetition penalty to the generation loop to fix model incoherence.
 import json
 import os
 import logging
@@ -8,7 +7,6 @@ import onnxruntime as ort
 from transformers import AutoTokenizer, AutoConfig
 import numpy
 
-# --- Basic Configuration ---
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=LOG_LEVEL, format='%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s')
 logger = logging.getLogger(__name__)
@@ -20,7 +18,6 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 
 class MetadataParser:
     _instance = None
-    
     PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object."""
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
 Output:"""
@@ -106,8 +103,6 @@ Output:"""
             response_text = self.tokenizer.decode(newly_generated_ids, skip_special_tokens=True)
             logger.debug(f"Cleaned model response text: {response_text}")
             
-            # R47: FIX - Add a safety check before parsing JSON.
-            # This prevents the JSONDecodeError if the model returns an empty or malformed string.
             clean_response = response_text.strip()
             if clean_response and clean_response.startswith('{') and clean_response.endswith('}'):
                 parsed_json = json.loads(clean_response)
@@ -132,24 +127,33 @@ Output:"""
         output_names = [out.name for out in self.session.get_outputs()]
 
         position_ids = numpy.arange(sequence_length, dtype=numpy.int64).reshape(batch_size, sequence_length)
-
         empty_past = [numpy.zeros((batch_size, self.num_heads, 0, self.head_dim), dtype=numpy.float32) for _ in pkv_input_names]
-
-        ort_inputs = {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'position_ids': position_ids,
-        }
+        ort_inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'position_ids': position_ids}
         for i, name in enumerate(pkv_input_names):
             ort_inputs[name] = empty_past[i]
-
         ort_outs = self.session.run(output_names, ort_inputs)
         logits = ort_outs[0]
         past_key_values = ort_outs[1:]
+        
+        # R48: FIX - Define generation parameters to improve quality.
+        repetition_penalty = 1.2
+        temperature = 0.7 
+        
+        next_token_logits = logits[:, -1, :]
+        
+        # Apply repetition penalty
+        for token_id in numpy.unique(input_ids):
+             next_token_logits[:, token_id] /= repetition_penalty
 
-        next_token_id = numpy.argmax(logits[:, -1, :], axis=-1).reshape((batch_size, 1))
+        # Apply temperature
+        next_token_logits = next_token_logits / temperature
+        
+        # Softmax and sample
+        probs = numpy.exp(next_token_logits) / numpy.sum(numpy.exp(next_token_logits))
+        next_token_id = numpy.argmax(probs, axis=-1).reshape((batch_size, 1))
+        
         generated_tokens = [next_token_id[0, 0]]
-
+        
         max_new_tokens = 512
         eos_token_id = self.tokenizer.eos_token_id
 
@@ -162,19 +166,25 @@ Output:"""
             sequence_length += 1
             attention_mask = numpy.concatenate([attention_mask, numpy.ones((batch_size, 1), dtype=numpy.int64)], axis=1)
 
-            ort_inputs = {
-                'input_ids': input_ids,
-                'attention_mask': attention_mask,
-                'position_ids': position_ids,
-            }
+            ort_inputs = {'input_ids': input_ids, 'attention_mask': attention_mask, 'position_ids': position_ids}
             for i, name in enumerate(pkv_input_names):
                 ort_inputs[name] = past_key_values[i]
             
             ort_outs = self.session.run(output_names, ort_inputs)
             logits = ort_outs[0]
             past_key_values = ort_outs[1:]
+            
+            next_token_logits = logits[:, -1, :]
+            
+            # R48: FIX - Apply repetition penalty and temperature in the loop.
+            current_sequence = inputs['input_ids'][0].tolist() + generated_tokens
+            for token_id in numpy.unique(current_sequence):
+                next_token_logits[:, token_id] /= repetition_penalty
 
-            next_token_id = numpy.argmax(logits, axis=-1).reshape((batch_size, 1))
+            next_token_logits = next_token_logits / temperature
+            probs = numpy.exp(next_token_logits) / numpy.sum(numpy.exp(next_token_logits))
+            next_token_id = numpy.argmax(probs, axis=-1).reshape((batch_size, 1))
+            
             generated_tokens.append(next_token_id[0, 0])
 
         return [inputs['input_ids'][0].tolist() + generated_tokens]
