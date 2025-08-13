@@ -1,57 +1,70 @@
-# R21: This script handles the text-only SmolLM2 model.
-# R24: Added a two-step process to log original model file sizes before ONNX conversion.
+# R27, R28, R29: This script now performs a clean export, adds INT8 quantization,
+# and pins the model revision for reproducibility.
 import os
 import shutil
-from optimum.onnxruntime import ORTModelForCausalLM
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from optimum.onnxruntime import ORTModelForCausalLM, ORTQuantizer
+from optimum.onnxruntime.configuration import QuantizationConfig, QuantizationType
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
+# R29: Pin the model and revision for deterministic builds.
 MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct"
-ORIGINAL_MODEL_PATH = "/original_model"
-EXPORT_PATH = "/onnx_model"
+REVISION = "e22a5366c348009257db3cf9d0526315530424f3" # Pinned to a specific commit
+
+# Define paths
+TEMP_ONNX_PATH = "/tmp/onnx_export"
+FINAL_EXPORT_PATH = "/onnx_model"
 
 if __name__ == "__main__":
-    print(f"--- Starting model preparation for '{MODEL_ID}' ---")
+    print(f"--- Starting model preparation for '{MODEL_ID}' @ revision '{REVISION}' ---")
+    
+    # --- Step 1: Export the base model to ONNX format ---
+    print(f"\n1. Exporting base model to temporary ONNX path: {TEMP_ONNX_PATH}")
+    onnx_model = ORTModelForCausalLM.from_pretrained(MODEL_ID, revision=REVISION, export=True)
+    onnx_model.save_pretrained(TEMP_ONNX_PATH)
+    print("Base ONNX export complete.")
 
-    # --- Step 1: Download and save the original PyTorch model ---
-    print(f"Downloading original PyTorch model and tokenizer to '{ORIGINAL_MODEL_PATH}'...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    model = AutoModelForCausalLM.from_pretrained(MODEL_ID)
+    # --- Step 2: Perform INT8 Dynamic Quantization ---
+    # R28: This step quantizes the model for better CPU performance.
+    print("\n2. Performing INT8 dynamic quantization...")
+    quantizer = ORTQuantizer.from_pretrained(TEMP_ONNX_PATH)
+    dqconfig = QuantizationConfig(
+        quantization_type=QuantizationType.DYNAMIC,
+        per_channel=False,
+        operators_to_quantize=["MatMul"] # Quantize the most impactful operators.
+    )
     
-    tokenizer.save_pretrained(ORIGINAL_MODEL_PATH)
-    model.save_pretrained(ORIGINAL_MODEL_PATH)
-    print("Original model and tokenizer downloaded and saved successfully.")
+    # The quantized model will be saved directly to our clean final path.
+    quantized_model_path = os.path.join(FINAL_EXPORT_PATH, "model.onnx")
+    os.makedirs(FINAL_EXPORT_PATH, exist_ok=True)
+    
+    quantizer.quantize(
+        save_dir=FINAL_EXPORT_PATH,
+        quantization_config=dqconfig,
+        file_suffix="" # Overwrite the model.onnx file in the save_dir
+    )
+    print(f"Quantization complete. Quantized model saved to: {FINAL_EXPORT_PATH}")
 
-    # --- Step 2: Log the sizes of the original files ---
-    # R24: This section fulfills the requirement to log file sizes.
-    print("\n--- Analyzing original model file sizes ---")
-    total_size_bytes = 0
-    try:
-        file_list = os.listdir(ORIGINAL_MODEL_PATH)
-        for filename in file_list:
-            filepath = os.path.join(ORIGINAL_MODEL_PATH, filename)
-            if os.path.isfile(filepath):
-                size_bytes = os.path.getsize(filepath)
-                size_mb = size_bytes / (1024 * 1024)
-                total_size_bytes += size_bytes
-                print(f"  - File: {filename:<30} Size: {size_mb:.2f} MB")
-        
-        total_size_mb = total_size_bytes / (1024 * 1024)
-        print(f"Total original model size: {total_size_mb:.2f} MB")
-    except Exception as e:
-        print(f"Could not analyze file sizes: {e}")
-    print("--- End of size analysis ---\n")
+    # --- Step 3: Save only the necessary tokenizer and config files ---
+    # R27: This ensures a clean export directory without any PyTorch files.
+    print("\n3. Saving necessary tokenizer and config files...")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=REVISION)
+    generation_config = GenerationConfig.from_pretrained(MODEL_ID, revision=REVISION)
+    
+    # Save these files to the same final directory.
+    tokenizer.save_pretrained(FINAL_EXPORT_PATH)
+    generation_config.save_pretrained(FINAL_EXPORT_PATH)
+    # The main model config was already saved by the quantizer.
+    print("Tokenizer and generation config saved.")
 
-    # --- Step 3: Export the now-local model to ONNX format ---
-    print(f"Exporting local model from '{ORIGINAL_MODEL_PATH}' to ONNX format at '{EXPORT_PATH}'...")
-    # The tokenizer is already compatible, so we just copy it.
-    shutil.copytree(ORIGINAL_MODEL_PATH, EXPORT_PATH, dirs_exist_ok=True)
+    # --- Step 4: Final verification and cleanup ---
+    print("\n--- Final Verification ---")
+    original_size = os.path.getsize(os.path.join(TEMP_ONNX_PATH, "model.onnx")) / (1024*1024)
+    quantized_size = os.path.getsize(os.path.join(FINAL_EXPORT_PATH, "model.onnx")) / (1024*1024)
+    print(f"Original ONNX model size: {original_size:.2f} MB")
+    print(f"Quantized ONNX model size: {quantized_size:.2f} MB")
+    print(f"Final exported files in '{FINAL_EXPORT_PATH}': {os.listdir(FINAL_EXPORT_PATH)}")
     
-    # Export the model using the local path as the source.
-    onnx_model = ORTModelForCausalLM.from_pretrained(ORIGINAL_MODEL_PATH, export=True)
-    
-    # Save the exported ONNX model files, overwriting the pytorch ones in the export path.
-    onnx_model.save_pretrained(EXPORT_PATH)
-    
-    print("--- Model export complete. ---")
-    final_files = os.listdir(EXPORT_PATH)
-    print(f"Final exported files in '{EXPORT_PATH}': {final_files}")
+    # Clean up the temporary directory
+    shutil.rmtree(TEMP_ONNX_PATH)
+    print("Temporary export directory cleaned up.")
+    print("--- Model preparation complete. ---")
