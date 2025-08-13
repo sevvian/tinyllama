@@ -1,6 +1,6 @@
 # This is the final, definitive version of the parser.
-# It includes a strict schema definition in the prompt to ensure the model
-# only generates the required fields in the correct format.
+# It reverts to the simple, effective prompt and generation logic from the
+# known working version ("R38"), while keeping the robust loading and parsing improvements.
 import json
 import os
 import logging
@@ -20,11 +20,11 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 class MetadataParser:
     _instance = None
     
-    # R52: The system instruction is now hardened with an explicit schema.
-    PROMPT_SYSTEM_INSTRUCTION = """You are a tool that extracts metadata from text and returns a single JSON object. The only allowed fields in the JSON are: "title", "year", "season", "episode", "resolution", "audio_language", "source", and "release_group". You must use double quotes for all keys and string values. If a field is not present in the input text, its value must be null."""
+    # R53: Reverted to the simple, effective prompt from the working version.
+    PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object."""
     
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
-JSON Output:"""
+Output:"""
     FEW_SHOT_EXAMPLE_1_ASSISTANT = """{
   "title": "Alice In Borderland",
   "year": 2020,
@@ -36,7 +36,7 @@ JSON Output:"""
   "release_group": null
 }"""
     FEW_SHOT_EXAMPLE_2_USER = """Text: "[apreder]Raffaello_Il_Principe_delle_Arti_in_3D(2017)DVB.mkv"
-JSON Output:"""
+Output:"""
     FEW_SHOT_EXAMPLE_2_ASSISTANT = """{
   "title": "Raffaello Il Principe delle Arti in 3D",
   "year": 2017,
@@ -47,19 +47,6 @@ JSON Output:"""
   "source": "DVB",
   "release_group": "apreder"
 }"""
-    FEW_SHOT_EXAMPLE_3_USER = """Text: "Nip/Tuck (2003) S06"
-JSON Output:"""
-    FEW_SHOT_EXAMPLE_3_ASSISTANT = """{
-  "title": "Nip/Tuck",
-  "year": 2003,
-  "season": 6,
-  "episode": null,
-  "resolution": null,
-  "audio_language": null,
-  "source": null,
-  "release_group": null
-}"""
-
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -75,6 +62,7 @@ JSON Output:"""
             logger.info(f"Loading tokenizer from path: {TOKENIZER_PATH}")
             self.tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_PATH)
             
+            # Keep the improved AutoConfig loader.
             logger.info(f"Loading model config from path: {CONFIG_PATH}")
             config = AutoConfig.from_pretrained(CONFIG_PATH)
             self.num_heads = config.num_key_value_heads 
@@ -99,15 +87,14 @@ JSON Output:"""
         if not self.session or not self.tokenizer:
             return {"error": "Model/tokenizer is not available."}
 
+        # Use the simple, effective two-shot prompt.
         messages = [
             {"role": "system", "content": self.PROMPT_SYSTEM_INSTRUCTION},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_1_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_1_ASSISTANT},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_2_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_2_ASSISTANT},
-            {"role": "user", "content": self.FEW_SHOT_EXAMPLE_3_USER},
-            {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_3_ASSISTANT},
-            {"role": "user", "content": f'Text: "{title}"\nJSON Output:'}
+            {"role": "user", "content": f'Text: "{title}"\nOutput:'}
         ]
 
         try:
@@ -122,6 +109,7 @@ JSON Output:"""
             response_text = self.tokenizer.decode(newly_generated_ids, skip_special_tokens=True)
             logger.debug(f"Cleaned model response text: {response_text}")
             
+            # Keep the improved, robust JSON parsing.
             clean_response = response_text.strip()
             if clean_response and clean_response.startswith('{') and clean_response.endswith('}'):
                 parsed_json = json.loads(clean_response)
@@ -135,6 +123,7 @@ JSON Output:"""
             logger.error(f"An unexpected error occurred during ONNX inference for title '{title}': {e}", exc_info=True)
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
 
+    # R53: Reverted to the simple, deterministic generation logic from the working version.
     def run_generation(self, inputs):
         """Runs autoregressive generation with the ONNX model, correctly handling the KV cache."""
         input_ids = inputs['input_ids']
@@ -154,15 +143,7 @@ JSON Output:"""
         logits = ort_outs[0]
         past_key_values = ort_outs[1:]
         
-        repetition_penalty = 1.2
-        
-        next_token_logits = logits[:, -1, :]
-        
-        for token_id in numpy.unique(input_ids[0]):
-             next_token_logits[:, token_id] /= repetition_penalty
-        
-        next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
-        
+        next_token_id = numpy.argmax(logits[:, -1, :], axis=-1).reshape((batch_size, 1))
         generated_tokens = [next_token_id[0, 0]]
         
         max_new_tokens = 512
@@ -185,13 +166,7 @@ JSON Output:"""
             logits = ort_outs[0]
             past_key_values = ort_outs[1:]
             
-            next_token_logits = logits[:, -1, :]
-            
-            current_sequence = inputs['input_ids'][0].tolist() + generated_tokens
-            for token_id in numpy.unique(current_sequence):
-                next_token_logits[:, token_id] /= repetition_penalty
-            
-            next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
+            next_token_id = numpy.argmax(logits, axis=-1).reshape((batch_size, 1))
             
             generated_tokens.append(next_token_id[0, 0])
 
