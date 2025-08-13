@@ -10,7 +10,7 @@ The application is served via a FastAPI backend and has a simple web UI for inte
 - **Web UI**: A simple interface to paste titles and see the extracted JSON output.
 - **LLM-Powered**: Uses a quantized TinyLlama model for flexible and robust pattern recognition.
 - **Dockerized**: Comes with a `Dockerfile` for easy deployment.
-- **CI/CD**: Includes a GitHub Actions workflow to automatically build and publish the Docker image to the GitHub Container Registry.
+- **CI/CD**  : Includes a GitHub Actions workflow to automatically build and publish the Docker image to the GitHub Container Registry.
 
 ## How to Run Locally
 
