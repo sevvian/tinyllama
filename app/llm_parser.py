@@ -1,5 +1,5 @@
-# R37 (NEW): The entire generation logic is rewritten to correctly handle the ONNX model's
-# strict input requirements for past_key_values on the initial call.
+# R38 (NEW): The generation logic is corrected to use 'num_key_value_heads' from the
+# model's config to create the correctly shaped KV cache tensors, fixing the dimension mismatch error.
 import json
 import os
 import logging
@@ -67,13 +67,15 @@ Output:"""
             logger.info(f"Loading ONNX model and creating inference session from: {ONNX_MODEL_PATH}")
             self.session = ort.InferenceSession(ONNX_MODEL_PATH, providers=["CPUExecutionProvider"])
 
-            # R37: Load model configuration to get parameters for KV cache shape.
+            # R38: Load model config to get correct parameters for KV cache shape.
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
-            self.num_heads = config["num_attention_heads"]
+            # R38: FIX - Use 'num_key_value_heads' for the KV cache, not 'num_attention_heads'.
+            self.num_heads = config["num_key_value_heads"] 
             self.hidden_size = config["hidden_size"]
-            self.head_dim = self.hidden_size // self.num_heads
+            self.head_dim = self.hidden_size // config["num_attention_heads"] # Head dim is based on attention heads
             
+            logger.info(f"Model config loaded: num_heads for KV cache = {self.num_heads}, head_dim = {self.head_dim}")
             logger.info("SUCCESS: Direct ONNX Runtime session created.")
         except Exception as e:
             logger.critical("FATAL: An exception occurred during ONNX initialization.", exc_info=True)
@@ -118,25 +120,19 @@ Output:"""
             logger.error(f"An unexpected error occurred during ONNX inference for title '{title}': {e}", exc_info=True)
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
 
-    # R37: This function is completely rewritten to implement the correct two-phase generation.
     def run_generation(self, inputs):
         """Runs autoregressive generation with the ONNX model, correctly handling the KV cache."""
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
         batch_size, sequence_length = input_ids.shape
 
-        # Get the names of all expected inputs from the ONNX model.
         input_names = [inp.name for inp in self.session.get_inputs()]
         pkv_input_names = [name for name in input_names if 'past_key_values' in name]
         output_names = [out.name for out in self.session.get_outputs()]
 
-        # --- Phase 1: Process the entire prompt at once ---
-        
-        # Create the 'position_ids' for the initial prompt.
         position_ids = numpy.arange(sequence_length, dtype=numpy.int64).reshape(batch_size, sequence_length)
 
-        # Create empty placeholder 'past_key_values' for the first run.
-        # Shape is (batch_size, num_heads, sequence_length=0, head_dim).
+        # R38: FIX - The empty past shape now uses self.num_heads, which is the correct 'num_key_value_heads'.
         empty_past = [numpy.zeros((batch_size, self.num_heads, 0, self.head_dim), dtype=numpy.float32) for _ in pkv_input_names]
 
         ort_inputs = {
@@ -144,20 +140,15 @@ Output:"""
             'attention_mask': attention_mask,
             'position_ids': position_ids,
         }
-        # Add the empty placeholders to the input feed.
         for i, name in enumerate(pkv_input_names):
             ort_inputs[name] = empty_past[i]
 
-        # Run the first pass.
         ort_outs = self.session.run(output_names, ort_inputs)
         logits = ort_outs[0]
-        past_key_values = ort_outs[1:] # This is now the populated KV cache for the prompt.
+        past_key_values = ort_outs[1:]
 
-        # Get the very first generated token.
         next_token_id = numpy.argmax(logits[:, -1, :], axis=-1).reshape((batch_size, 1))
         generated_tokens = [next_token_id[0, 0]]
-
-        # --- Phase 2: Generate subsequent tokens one by one ---
 
         max_new_tokens = 512
         eos_token_id = self.tokenizer.eos_token_id
@@ -166,14 +157,9 @@ Output:"""
             if generated_tokens[-1] == eos_token_id:
                 break
 
-            # For the next step, the input is just the new token.
             input_ids = next_token_id
-            
-            # The position is the length of the sequence so far.
             position_ids = numpy.array([[sequence_length]], dtype=numpy.int64)
             sequence_length += 1
-            
-            # The attention mask must be extended.
             attention_mask = numpy.concatenate([attention_mask, numpy.ones((batch_size, 1), dtype=numpy.int64)], axis=1)
 
             ort_inputs = {
@@ -181,14 +167,12 @@ Output:"""
                 'attention_mask': attention_mask,
                 'position_ids': position_ids,
             }
-            # Add the KV cache from the *previous* step.
             for i, name in enumerate(pkv_input_names):
                 ort_inputs[name] = past_key_values[i]
             
-            # Run inference for the single new token.
             ort_outs = self.session.run(output_names, ort_inputs)
             logits = ort_outs[0]
-            past_key_values = ort_outs[1:] # Update the cache for the next round.
+            past_key_values = ort_outs[1:]
 
             next_token_id = numpy.argmax(logits, axis=-1).reshape((batch_size, 1))
             generated_tokens.append(next_token_id[0, 0])
