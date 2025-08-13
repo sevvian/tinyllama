@@ -1,5 +1,6 @@
-# R35: This module is rewritten to use the onnxruntime library directly,
-# removing the dependency on 'optimum' and 'torch' at runtime.
+# R35: This module uses the onnxruntime library directly.
+# R36 (NEW): Corrected the manual generation loop to provide the required 'position_ids'
+# and correctly formatted 'past_key_values' inputs to the ONNX model.
 import json
 import os
 import logging
@@ -90,54 +91,11 @@ Output:"""
         try:
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.tokenizer(prompt, return_tensors="np")
-
-            input_ids = inputs['input_ids']
-            attention_mask = inputs['attention_mask']
             
-            # The ONNX model for Causal LM typically has a past_key_values cache.
-            # We need to get the number and shape of these from the model's inputs.
-            num_pkv = (len(self.session.get_inputs()) - 2) // 2
-            past_key_values = [numpy.zeros((1, 8, 0, 64), dtype=numpy.float32) for _ in range(num_pkv * 2)] # Example shape, may need adjustment
-
-            max_new_tokens = 512
-            eos_token_id = self.tokenizer.eos_token_id
-
-            for _ in range(max_new_tokens):
-                ort_inputs = {
-                    'input_ids': input_ids,
-                    'attention_mask': attention_mask,
-                }
-                
-                # Add past_key_values to the inputs dictionary
-                for i, pkv in enumerate(past_key_values):
-                    ort_inputs[f'past_key_values.{i}'] = pkv
-
-                ort_outs = self.session.run(None, ort_inputs)
-                
-                logits = ort_outs[0]
-                past_key_values = ort_outs[1:] # The rest of the outputs are the new KV cache
-
-                next_token_logits = logits[:, -1, :]
-                next_token = numpy.argmax(next_token_logits, axis=-1).reshape((1,1))
-                
-                # Append the new token
-                input_ids = next_token
-                
-                # Update attention mask
-                attention_mask = numpy.concatenate([attention_mask, numpy.ones((1,1), dtype=numpy.int64)], axis=1)
-
-                if next_token[0,0] == eos_token_id:
-                    break
-            
-            # This part of the logic needs to be fixed to accumulate tokens
-            # For now, this is a placeholder to show the structure.
-            # A full implementation requires accumulating the generated tokens.
-            # Let's simplify for now and assume the logic will be refined.
-            
-            # A simplified placeholder for generation
             generated_ids = self.run_generation(inputs)
             
             response_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+            logger.debug(f"Raw model response text: {response_text}")
             
             json_start = response_text.rfind('{')
             if json_start != -1:
@@ -153,24 +111,23 @@ Output:"""
             logger.error(f"An unexpected error occurred during ONNX inference for title '{title}': {e}", exc_info=True)
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
 
+    # R36: This entire function is rewritten to be correct.
     def run_generation(self, inputs):
-        """Helper function for the generation loop."""
+        """Helper function for the generation loop that correctly handles the ONNX model's specific inputs."""
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
-        
-        # Get the names of the past_key_values inputs from the model
-        pkv_input_names = [inp.name for inp in self.session.get_inputs() if 'past_key_values' in inp.name]
-        
-        # Initialize past_key_values as empty numpy arrays with the correct shape
-        # This is a common pattern, but the exact shape can vary.
-        # Shape is (batch_size, num_heads, sequence_length, head_dim)
-        # We start with sequence_length = 0
-        batch_size = input_ids.shape[0]
-        num_heads = 8 # This is a typical value for small models, may need to get from config
-        head_dim = 64 # This is a typical value for small models, may need to get from config
-        
-        past_key_values = [numpy.zeros((batch_size, num_heads, 0, head_dim), dtype=numpy.float32) for _ in pkv_input_names]
+        batch_size, sequence_length = input_ids.shape
 
+        # R36: FIX - Create the mandatory 'position_ids' input.
+        position_ids = numpy.arange(sequence_length, dtype=numpy.int64).reshape(1, sequence_length)
+
+        # Get the names of all expected inputs, including the split KV cache.
+        input_names = [inp.name for inp in self.session.get_inputs()]
+        pkv_input_names = [name for name in input_names if 'past_key_values' in name]
+        
+        # Initialize the past_key_values as empty. This is the first pass.
+        past_key_values = None
+        
         generated_tokens = []
         max_new_tokens = 512
         eos_token_id = self.tokenizer.eos_token_id
@@ -179,25 +136,35 @@ Output:"""
             ort_inputs = {
                 'input_ids': input_ids,
                 'attention_mask': attention_mask,
+                'position_ids': position_ids,
             }
-            for i, name in enumerate(pkv_input_names):
-                ort_inputs[name] = past_key_values[i]
+            
+            # R36: FIX - Correctly handle the past_key_values format.
+            if past_key_values is not None:
+                # On subsequent runs, we provide the KV cache from the previous step.
+                for i, name in enumerate(pkv_input_names):
+                    ort_inputs[name] = past_key_values[i]
 
             output_names = [out.name for out in self.session.get_outputs()]
             ort_outs = self.session.run(output_names, ort_inputs)
             
             logits = ort_outs[0]
+            # The new KV cache is the rest of the outputs.
             past_key_values = ort_outs[1:]
 
+            # Get the next token by finding the highest logit.
             next_token_id = numpy.argmax(logits[:, -1, :], axis=-1).reshape((batch_size, 1))
-            
             generated_tokens.append(next_token_id[0,0])
 
             if next_token_id[0,0] == eos_token_id:
                 break
 
+            # Prepare inputs for the *next* iteration.
             input_ids = next_token_id
+            # Update attention mask to include the new token.
             attention_mask = numpy.concatenate([attention_mask, numpy.ones((batch_size, 1), dtype=numpy.int64)], axis=1)
+            # R36: FIX - The position_id for the next token is just the current sequence length.
+            position_ids = numpy.array([[attention_mask.shape[1] - 1]], dtype=numpy.int64)
 
         return [inputs['input_ids'][0].tolist() + generated_tokens]
 
