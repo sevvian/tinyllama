@@ -1,6 +1,5 @@
 # This workflow is a one-time, manual process to build the ONNX model
 # and commit the files to the repository using Git LFS.
-# It is 100% self-contained and requires no local setup.
 name: Build and Commit ONNX Model via LFS
 
 on:
@@ -9,7 +8,6 @@ on:
 jobs:
   build-and-commit:
     runs-on: ubuntu-latest
-    
     permissions:
       contents: write
 
@@ -47,9 +45,9 @@ jobs:
           git add .gitattributes
 
       - name: Add model files to commit
+        # The -f flag is essential to override the .gitignore rule.
         run: git add -f onnx_model
 
-      # R34: FIX - Corrected the action to include its full name and version.
       - name: Commit and push the ONNX model files
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
