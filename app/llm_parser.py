@@ -1,6 +1,6 @@
 # This is the final, definitive version of the parser.
-# It uses a simple, clean, example-driven prompt to ensure the model
-# produces reliable, factual JSON output.
+# It includes a strict schema definition in the prompt to ensure the model
+# only generates the required fields in the correct format.
 import json
 import os
 import logging
@@ -20,8 +20,8 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 class MetadataParser:
     _instance = None
     
-    # R51: The entire prompt is simplified to be example-driven.
-    PROMPT_SYSTEM_INSTRUCTION = "You are a tool that extracts metadata from text and returns a single JSON object."
+    # R52: The system instruction is now hardened with an explicit schema.
+    PROMPT_SYSTEM_INSTRUCTION = """You are a tool that extracts metadata from text and returns a single JSON object. The only allowed fields in the JSON are: "title", "year", "season", "episode", "resolution", "audio_language", "source", and "release_group". You must use double quotes for all keys and string values. If a field is not present in the input text, its value must be null."""
     
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
 JSON Output:"""
@@ -47,17 +47,17 @@ JSON Output:"""
   "source": "DVB",
   "release_group": "apreder"
 }"""
-    FEW_SHOT_EXAMPLE_3_USER = """Text: "Four More Shots Please 2022 S03 Complete Hindi www.DownloadHub.us 1080p Web-DL ESubs"
+    FEW_SHOT_EXAMPLE_3_USER = """Text: "Nip/Tuck (2003) S06"
 JSON Output:"""
     FEW_SHOT_EXAMPLE_3_ASSISTANT = """{
-  "title": "Four More Shots Please",
-  "year": 2022,
-  "season": 3,
+  "title": "Nip/Tuck",
+  "year": 2003,
+  "season": 6,
   "episode": null,
-  "resolution": "1080p",
-  "audio_language": ["Hindi"],
-  "source": "Web-DL",
-  "release_group": "DownloadHub.us"
+  "resolution": null,
+  "audio_language": null,
+  "source": null,
+  "release_group": null
 }"""
 
 
