@@ -1,5 +1,6 @@
 # This is the final, definitive version of the parser.
-# It adds a repetition penalty to the generation loop to fix model incoherence.
+# It includes a hardened prompt and stricter generation logic to ensure
+# the quantized model produces reliable, factual output.
 import json
 import os
 import logging
@@ -18,9 +19,12 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 
 class MetadataParser:
     _instance = None
-    PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object."""
+    
+    # R50: The system instruction is now hardened with stricter constraints.
+    PROMPT_SYSTEM_INSTRUCTION = """You are a precise data extraction tool. Your only function is to parse the user's text and return a single, clean JSON object. You must only extract information that is explicitly present in the text. Do not add any data that is not written in the input. If a field is not present, its value must be null. You must not generate any text, explanation, or code other than the JSON object."""
+    
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
-Output:"""
+Output (JSON only):"""
     FEW_SHOT_EXAMPLE_1_ASSISTANT = """{
   "title": "Alice In Borderland",
   "year": 2020,
@@ -31,17 +35,17 @@ Output:"""
   "source": "HDRip",
   "release_group": null
 }"""
-    FEW_SHOT_EXAMPLE_2_USER = """Text: "【高清剧集网发布 www.BPHDTV.com】外星也難民.第四季[全12集][簡繁英字幕].Solar.Opposites.S04.2023.1080p.DSNP.WEB-DL.DDP5.1.H264-ZeroTV"
-Output:"""
+    FEW_SHOT_EXAMPLE_2_USER = """Text: "[apreder]Raffaello_Il_Principe_delle_Arti_in_3D(2017)DVB.mkv"
+Output (JSON only):"""
     FEW_SHOT_EXAMPLE_2_ASSISTANT = """{
-  "title": "Solar Opposites",
-  "year": 2023,
-  "season": 4,
-  "episode": "01-12",
-  "resolution": "1080p",
+  "title": "Raffaello Il Principe delle Arti in 3D",
+  "year": 2017,
+  "season": null,
+  "episode": null,
+  "resolution": null,
   "audio_language": null,
-  "source": "WEB-DL",
-  "release_group": "ZeroTV"
+  "source": "DVB",
+  "release_group": "apreder"
 }"""
 
     def __new__(cls, *args, **kwargs):
@@ -88,7 +92,8 @@ Output:"""
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_1_ASSISTANT},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_2_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_2_ASSISTANT},
-            {"role": "user", "content": f'Text: "{title}"\nOutput:'}
+            # R50: The final instruction is now more explicit.
+            {"role": "user", "content": f'Text: "{title}"\nOutput (JSON only):'}
         ]
 
         try:
@@ -135,22 +140,17 @@ Output:"""
         logits = ort_outs[0]
         past_key_values = ort_outs[1:]
         
-        # R48: FIX - Define generation parameters to improve quality.
+        # R50: Define generation parameters for factual, non-creative output.
         repetition_penalty = 1.2
-        temperature = 0.7 
         
         next_token_logits = logits[:, -1, :]
         
-        # Apply repetition penalty
-        for token_id in numpy.unique(input_ids):
+        # Apply repetition penalty to the prompt tokens
+        for token_id in numpy.unique(input_ids[0]):
              next_token_logits[:, token_id] /= repetition_penalty
-
-        # Apply temperature
-        next_token_logits = next_token_logits / temperature
         
-        # Softmax and sample
-        probs = numpy.exp(next_token_logits) / numpy.sum(numpy.exp(next_token_logits))
-        next_token_id = numpy.argmax(probs, axis=-1).reshape((batch_size, 1))
+        # Use simple greedy decoding (argmax) for deterministic output.
+        next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
         
         generated_tokens = [next_token_id[0, 0]]
         
@@ -176,14 +176,12 @@ Output:"""
             
             next_token_logits = logits[:, -1, :]
             
-            # R48: FIX - Apply repetition penalty and temperature in the loop.
+            # Apply repetition penalty to all previously generated tokens
             current_sequence = inputs['input_ids'][0].tolist() + generated_tokens
             for token_id in numpy.unique(current_sequence):
                 next_token_logits[:, token_id] /= repetition_penalty
-
-            next_token_logits = next_token_logits / temperature
-            probs = numpy.exp(next_token_logits) / numpy.sum(numpy.exp(next_token_logits))
-            next_token_id = numpy.argmax(probs, axis=-1).reshape((batch_size, 1))
+            
+            next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
             
             generated_tokens.append(next_token_id[0, 0])
 
