@@ -1,6 +1,5 @@
-# This is the final, guaranteed workflow using a two-job "Airlock" process.
-# It physically separates the build artifact from the final image build.
-# It does NOT use Git LFS.
+# This is the final, optimized workflow using a two-job "Airlock" process.
+# The slow builder job is now cached for performance.
 name: Build and Publish Application Docker Image
 
 on:
@@ -8,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  # --- JOB 1: BUILD THE ONNX MODEL ARTIFACT ---
+  # --- JOB 1: BUILD THE ONNX MODEL ARTIFACT (CACHED) ---
   build_artifact:
     runs-on: ubuntu-latest
     steps:
@@ -18,25 +17,37 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build the builder image
-        run: docker build -f Dockerfile.builder -t onnx-builder .
+      # R47: FIX - Replace the simple 'docker build' with a cached build step.
+      - name: Build the builder image with cache
+        uses: docker/build-push-action@v5
+        with:
+          # Point to the builder Dockerfile.
+          file: ./Dockerfile.builder
+          # Give the image a tag so we can reference it locally.
+          tags: onnx-builder:latest
+          # Do NOT push this image to the registry.
+          push: false
+          # Load the built image into the runner's local Docker daemon.
+          load: true
+          # Enable caching for this slow build step.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Create a temporary container from the builder
+        # This command now finds the 'onnx-builder:latest' image locally.
         run: docker create --name temp_builder onnx-builder
 
       - name: Copy the /onnx_model artifact from the container
         run: docker cp temp_builder:/onnx_model ./onnx_model
 
       - name: Upload the ONNX model as an artifact
-        # This saves the clean 'onnx_model' directory for the next job.
         uses: actions/upload-artifact@v4
         with:
           name: onnx-model-artifact
           path: onnx_model
 
-  # --- JOB 2: BUILD AND PUSH THE FINAL, THIN IMAGE ---
+  # --- JOB 2: BUILD AND PUSH THE FINAL, THIN IMAGE (NOT CACHED) ---
   build_and_push_image:
-    # This job will only run after the artifact is successfully built.
     needs: build_artifact
     runs-on: ubuntu-latest
     permissions:
@@ -48,11 +59,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download the ONNX model artifact
-        # This downloads the clean 'onnx_model' directory from the previous job.
         uses: actions/download-artifact@v4
         with:
           name: onnx-model-artifact
-          # Download it to the root of the workspace.
           path: .
 
       - name: Verify downloaded artifact
@@ -69,6 +78,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push final image
+        # This step remains simple and cache-free.
         uses: docker/build-push-action@v5
         with:
           context: .
