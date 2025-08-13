@@ -1,6 +1,7 @@
-# This workflow is for a one-time, manual build of the ONNX model.
-# It builds the model and commits the files back to the repository.
-name: Build and Commit ONNX Model
+# This workflow is a one-time, manual process to build the ONNX model
+# and commit the files to the repository using Git LFS.
+# It is 100% self-contained and requires no local setup.
+name: Build and Commit ONNX Model via LFS
 
 on:
   workflow_dispatch:
@@ -29,20 +30,34 @@ jobs:
         run: docker cp temp_builder:/onnx_model ./onnx_model
 
       - name: Verify that files were copied
-        run: |
-          echo "Listing contents of ./onnx_model:"
-          ls -lR ./onnx_model
+        run: ls -lR ./onnx_model
+
+      # --- NEW SELF-CONTAINED GIT LFS SETUP ---
+
+      - name: Set up Git LFS
+        # This step installs Git LFS on the runner.
+        run: git lfs install
 
       - name: Configure Git User
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
-      # R32: FIX - Use the '-f' (force) flag to add the ignored directory.
-      - name: Add files to commit
-        run: git add -f onnx_model
+      - name: Create .gitattributes file and track large files
+        # This is the step that you would have done locally. We now do it in the workflow.
+        # It tells Git which files to handle with LFS.
+        run: |
+          git lfs track "onnx_model/*.onnx"
+          git lfs track "onnx_model/*.safetensors"
+          # Ensure the .gitattributes file itself is added to the commit
+          git add .gitattributes
+
+      - name: Add model files to commit
+        # Now we add the model directory. Git will see the tracking rules
+        # from .gitattributes and handle the large files correctly.
+        run: git add onnx_model
 
       - name: Commit and push the ONNX model files
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "feat: Add pre-built ONNX model files"
+        # This action will now commit both the .gitattributes file and the LFS pointer files,
+        # while the large files are uploaded to LFS storage in the background.
+        uses: stef
