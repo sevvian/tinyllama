@@ -1,0 +1,56 @@
+# This workflow is a one-time, manual process to build the ONNX model
+# and commit the files to the repository using Git LFS.
+# It is 100% self-contained and requires no local setup.
+name: Build and Commit ONNX Model via LFS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the builder image
+        run: docker build -f Dockerfile.builder -t onnx-builder .
+
+      - name: Create a temporary container from the builder
+        run: docker create --name temp_builder onnx-builder
+
+      - name: Copy the /onnx_model artifact from the container
+        run: docker cp temp_builder:/onnx_model ./onnx_model
+
+      - name: Verify that files were copied
+        run: ls -lR ./onnx_model
+
+      - name: Set up Git LFS
+        run: git lfs install
+
+      - name: Configure Git User
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Create .gitattributes file and track large files
+        run: |
+          git lfs track "onnx_model/*.onnx"
+          git lfs track "onnx_model/*.safetensors"
+          git add .gitattributes
+
+      - name: Add model files to commit
+        run: git add -f onnx_model
+
+      # R34: FIX - Corrected the action to include its full name and version.
+      - name: Commit and push the ONNX model files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "feat: Add pre-built ONNX model files and configure Git LFS"
