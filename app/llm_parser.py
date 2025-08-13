@@ -1,6 +1,6 @@
 # This is the final, definitive version of the parser.
-# It includes a hardened prompt and stricter generation logic to ensure
-# the model produces reliable, factual, non-creative JSON output.
+# It uses a simple, clean, example-driven prompt to ensure the model
+# produces reliable, factual JSON output.
 import json
 import os
 import logging
@@ -20,12 +20,11 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 class MetadataParser:
     _instance = None
     
-    # R50: The system instruction is now hardened with stricter constraints.
-    PROMPT_SYSTEM_INSTRUCTION = """You are a precise data extraction tool. Your only function is to parse the user's text and return a single, clean JSON object. You must only extract information that is explicitly present in the text. Do not invent, infer, or add any data that is not written in the input. If a field is not present, its value must be null. You MUST NOT generate any text, explanation, or code other than the JSON object."""
+    # R51: The entire prompt is simplified to be example-driven.
+    PROMPT_SYSTEM_INSTRUCTION = "You are a tool that extracts metadata from text and returns a single JSON object."
     
-    # R50: The few-shot examples are also hardened to reinforce the "JSON only" instruction.
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
-Output (JSON only):"""
+JSON Output:"""
     FEW_SHOT_EXAMPLE_1_ASSISTANT = """{
   "title": "Alice In Borderland",
   "year": 2020,
@@ -37,7 +36,7 @@ Output (JSON only):"""
   "release_group": null
 }"""
     FEW_SHOT_EXAMPLE_2_USER = """Text: "[apreder]Raffaello_Il_Principe_delle_Arti_in_3D(2017)DVB.mkv"
-Output (JSON only):"""
+JSON Output:"""
     FEW_SHOT_EXAMPLE_2_ASSISTANT = """{
   "title": "Raffaello Il Principe delle Arti in 3D",
   "year": 2017,
@@ -48,6 +47,19 @@ Output (JSON only):"""
   "source": "DVB",
   "release_group": "apreder"
 }"""
+    FEW_SHOT_EXAMPLE_3_USER = """Text: "Four More Shots Please 2022 S03 Complete Hindi www.DownloadHub.us 1080p Web-DL ESubs"
+JSON Output:"""
+    FEW_SHOT_EXAMPLE_3_ASSISTANT = """{
+  "title": "Four More Shots Please",
+  "year": 2022,
+  "season": 3,
+  "episode": null,
+  "resolution": "1080p",
+  "audio_language": ["Hindi"],
+  "source": "Web-DL",
+  "release_group": "DownloadHub.us"
+}"""
+
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -93,8 +105,9 @@ Output (JSON only):"""
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_1_ASSISTANT},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_2_USER},
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_2_ASSISTANT},
-            # R50: The final instruction is now more explicit.
-            {"role": "user", "content": f'Text: "{title}"\nOutput (JSON only):'}
+            {"role": "user", "content": self.FEW_SHOT_EXAMPLE_3_USER},
+            {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_3_ASSISTANT},
+            {"role": "user", "content": f'Text: "{title}"\nJSON Output:'}
         ]
 
         try:
@@ -141,16 +154,13 @@ Output (JSON only):"""
         logits = ort_outs[0]
         past_key_values = ort_outs[1:]
         
-        # R50: Define generation parameters for factual, non-creative output.
         repetition_penalty = 1.2
         
         next_token_logits = logits[:, -1, :]
         
-        # Apply repetition penalty to the prompt tokens
         for token_id in numpy.unique(input_ids[0]):
              next_token_logits[:, token_id] /= repetition_penalty
         
-        # Use simple greedy decoding (argmax) for deterministic, non-creative output.
         next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
         
         generated_tokens = [next_token_id[0, 0]]
@@ -177,12 +187,10 @@ Output (JSON only):"""
             
             next_token_logits = logits[:, -1, :]
             
-            # Apply repetition penalty to all previously generated tokens
             current_sequence = inputs['input_ids'][0].tolist() + generated_tokens
             for token_id in numpy.unique(current_sequence):
                 next_token_logits[:, token_id] /= repetition_penalty
             
-            # Use simple greedy decoding (argmax) for deterministic, non-creative output.
             next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
             
             generated_tokens.append(next_token_id[0, 0])
