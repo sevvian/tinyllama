@@ -1,4 +1,4 @@
-# This is the final, correct version with all runtime bugs fixed.
+# This is the final, correct version with the JSON parsing bug fixed.
 import json
 import os
 import logging
@@ -17,13 +17,31 @@ CONFIG_PATH = os.path.join(LOCAL_MODEL_DIR, "config.json")
 
 class MetadataParser:
     _instance = None
-    PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser...""" # Omitted for brevity
-    FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020)..."
+    PROMPT_SYSTEM_INSTRUCTION = """You are an expert file name parser. Your task is to extract metadata from the user's text and return a clean JSON object. The fields to extract are: title, year, season, episode, resolution, audio_language, source, release_group. If a field is not present, return it as null. Respond with ONLY the JSON object."""
+    FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
 Output:"""
-    FEW_SHOT_EXAMPLE_1_ASSISTANT = """{ "title": "Alice In Borderland", ... }"""
-    FEW_SHOT_EXAMPLE_2_USER = """Text: "【高清剧集网发布 www.BPHDTV.com】外星也難民..."
+    FEW_SHOT_EXAMPLE_1_ASSISTANT = """{
+  "title": "Alice In Borderland",
+  "year": 2020,
+  "season": 2,
+  "episode": "01-08",
+  "resolution": "720p",
+  "audio_language": ["Tamil", "Hindi", "English"],
+  "source": "HDRip",
+  "release_group": null
+}"""
+    FEW_SHOT_EXAMPLE_2_USER = """Text: "【高清剧集网发布 www.BPHDTV.com】外星也難民.第四季[全12集][簡繁英字幕].Solar.Opposites.S04.2023.1080p.DSNP.WEB-DL.DDP5.1.H264-ZeroTV"
 Output:"""
-    FEW_SHOT_EXAMPLE_2_ASSISTANT = """{ "title": "Solar Opposites", ... }"""
+    FEW_SHOT_EXAMPLE_2_ASSISTANT = """{
+  "title": "Solar Opposites",
+  "year": 2023,
+  "season": 4,
+  "episode": "01-12",
+  "resolution": "1080p",
+  "audio_language": null,
+  "source": "WEB-DL",
+  "release_group": "ZeroTV"
+}"""
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
@@ -62,6 +80,7 @@ Output:"""
     def extract_metadata(self, title: str) -> dict:
         if not self.session or not self.tokenizer:
             return {"error": "Model/tokenizer is not available."}
+
         messages = [
             {"role": "system", "content": self.PROMPT_SYSTEM_INSTRUCTION},
             {"role": "user", "content": self.FEW_SHOT_EXAMPLE_1_USER},
@@ -70,20 +89,29 @@ Output:"""
             {"role": "assistant", "content": self.FEW_SHOT_EXAMPLE_2_ASSISTANT},
             {"role": "user", "content": f'Text: "{title}"\nOutput:'}
         ]
+
         try:
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.tokenizer(prompt, return_tensors="np")
+            
             generated_ids = self.run_generation(inputs)
-            response_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-            logger.debug(f"Raw model response text: {response_text}")
-            json_start = response_text.rfind('{')
-            if json_start != -1:
-                json_end = response_text.rfind('}')
-                if json_end > json_start:
-                    response_text = response_text[json_start:json_end+1]
+            
+            # R46: FIX - Separate the input prompt from the generated output.
+            # Get the length of the original prompt in tokens.
+            prompt_len = inputs['input_ids'].shape[1]
+            # Slice the generated_ids to get only the newly generated tokens.
+            newly_generated_ids = generated_ids[0][prompt_len:]
+            
+            # Decode only the new tokens.
+            response_text = self.tokenizer.decode(newly_generated_ids, skip_special_tokens=True)
+            logger.debug(f"Cleaned model response text: {response_text}")
+            
+            # The response should now be a clean JSON string.
+            # We can remove the fragile 'rfind' logic.
             parsed_json = json.loads(response_text)
             parsed_json['original_title'] = title
             return parsed_json
+
         except Exception as e:
             logger.error(f"An unexpected error occurred during ONNX inference for title '{title}': {e}", exc_info=True)
             return {"original_title": title, "error": f"An unexpected error occurred: {e}"}
@@ -122,6 +150,7 @@ Output:"""
             next_token_id = numpy.argmax(logits, axis=-1).reshape((batch_size, 1))
             generated_tokens.append(next_token_id[0, 0])
         return [inputs['input_ids'][0].tolist() + generated_tokens]
+
 
 logger.info("Creating MetadataParser instance...")
 parser_instance = MetadataParser()
