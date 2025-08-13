@@ -16,7 +16,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # R31: FIX - Corrected the action name from 'setup-build-action' to 'setup-buildx-action'.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -39,8 +38,9 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
+      # R32: FIX - Use the '-f' (force) flag to add the ignored directory.
       - name: Add files to commit
-        run: git add onnx_model
+        run: git add -f onnx_model
 
       - name: Commit and push the ONNX model files
         uses: stefanzweifel/git-auto-commit-action@v5
