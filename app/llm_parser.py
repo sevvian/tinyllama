@@ -1,6 +1,6 @@
 # This is the final, definitive version of the parser.
 # It includes a hardened prompt and stricter generation logic to ensure
-# the quantized model produces reliable, factual output.
+# the model produces reliable, factual, non-creative JSON output.
 import json
 import os
 import logging
@@ -21,8 +21,9 @@ class MetadataParser:
     _instance = None
     
     # R50: The system instruction is now hardened with stricter constraints.
-    PROMPT_SYSTEM_INSTRUCTION = """You are a precise data extraction tool. Your only function is to parse the user's text and return a single, clean JSON object. You must only extract information that is explicitly present in the text. Do not add any data that is not written in the input. If a field is not present, its value must be null. You must not generate any text, explanation, or code other than the JSON object."""
+    PROMPT_SYSTEM_INSTRUCTION = """You are a precise data extraction tool. Your only function is to parse the user's text and return a single, clean JSON object. You must only extract information that is explicitly present in the text. Do not invent, infer, or add any data that is not written in the input. If a field is not present, its value must be null. You MUST NOT generate any text, explanation, or code other than the JSON object."""
     
+    # R50: The few-shot examples are also hardened to reinforce the "JSON only" instruction.
     FEW_SHOT_EXAMPLE_1_USER = """Text: "www.Tamilblasters.qpon - Alice In Borderland (2020) S02 EP (01-08) - HQ HDRip - 720p - [Tam+ Hin + Eng] - (AAC 2.0) - 2.8GB - ESub"
 Output (JSON only):"""
     FEW_SHOT_EXAMPLE_1_ASSISTANT = """{
@@ -149,7 +150,7 @@ Output (JSON only):"""
         for token_id in numpy.unique(input_ids[0]):
              next_token_logits[:, token_id] /= repetition_penalty
         
-        # Use simple greedy decoding (argmax) for deterministic output.
+        # Use simple greedy decoding (argmax) for deterministic, non-creative output.
         next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
         
         generated_tokens = [next_token_id[0, 0]]
@@ -181,6 +182,7 @@ Output (JSON only):"""
             for token_id in numpy.unique(current_sequence):
                 next_token_logits[:, token_id] /= repetition_penalty
             
+            # Use simple greedy decoding (argmax) for deterministic, non-creative output.
             next_token_id = numpy.argmax(next_token_logits, axis=-1).reshape((batch_size, 1))
             
             generated_tokens.append(next_token_id[0, 0])
