@@ -1,5 +1,5 @@
-# R30 (NEW): This workflow uses a robust "Airlock" method to guarantee a clean push.
-# It builds to a .tar file, then loads and pushes from that clean file.
+# This is the final, guaranteed workflow using a two-job "Airlock" process.
+# It physically separates the build artifact from the final image build.
 name: Build and Publish Docker Image to GHCR
 
 on:
@@ -7,9 +7,41 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-push-image:
+  # --- JOB 1: BUILD THE ONNX MODEL ARTIFACT ---
+  build_artifact:
     runs-on: ubuntu-latest
-    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the builder image
+        # We build the builder image but do not push it.
+        # We give it a unique tag to reference it in the next step.
+        run: docker build -f Dockerfile.builder -t onnx-builder .
+
+      - name: Create a temporary container from the builder
+        # We create a container so we can copy the files out of it.
+        run: docker create --name temp_builder onnx-builder
+
+      - name: Copy the /onnx_model artifact from the container
+        # This is the key step: we extract the finished product.
+        run: docker cp temp_builder:/onnx_model ./onnx_model_artifact
+
+      - name: Upload the ONNX model as an artifact
+        # We save the extracted folder as a GitHub Actions artifact.
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnx-model
+          path: onnx_model_artifact
+
+  # --- JOB 2: BUILD AND PUSH THE FINAL, THIN IMAGE ---
+  build_and_push_image:
+    # This job will only run after the artifact is successfully built.
+    needs: build_artifact
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -17,6 +49,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Download the ONNX model artifact
+        # We download the clean artifact from the previous job.
+        uses: actions/download-artifact@v4
+        with:
+          name: onnx-model
+          path: .
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -28,34 +67,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # --- STEP 1: Build the image and export it to a clean .tar file ---
-      # This step builds the multi-stage Dockerfile but outputs ONLY the final stage
-      # to a tarball, physically excluding the 4GB builder layer.
-      - name: Build and export to local tarball
+      - name: Build and push final image
+        # We now build the final, single-stage Dockerfile.
+        # The COPY command inside it will find the downloaded artifact.
         uses: docker/build-push-action@v5
         with:
           context: .
-          # Do NOT push to the registry.
-          push: false
-          # Do NOT load to the daemon.
-          load: false
-          # Export the final image to a tar file.
-          outputs: type=docker,dest=image.tar
-          # Define the tags that will be embedded in the tar file.
+          # The Dockerfile to use is the simple, single-stage one.
+          file: ./Dockerfile
+          push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
-
-      # --- STEP 2: Load the clean image from the .tar file ---
-      # This loads ONLY the thin image into the runner's Docker daemon.
-      # The daemon now has no knowledge of the 4GB builder layer.
-      - name: Load image from tarball
-        run: docker load --input image.tar
-
-      # --- STEP 3: Push the clean image to the registry ---
-      # This push command will only see the thin image layers that were loaded
-      # from the tarball and will only push those to the registry.
-      - name: Push Docker image to GHCR
-        run: |
-          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
-          docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ github.sha }}
+          # No caching is needed here as the build is simple and fast.
+          provenance: false
