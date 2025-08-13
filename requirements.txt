@@ -1,8 +1,8 @@
-# Minimal runtime dependencies for a thin image.
+# R55: Updated transformers version for Qwen3 model compatibility.
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
 onnxruntime==1.18.1
-transformers==4.41.2
+transformers==4.42.4
 Jinja2==3.1.4
 numpy==1.26.4
