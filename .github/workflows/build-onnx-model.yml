@@ -16,8 +16,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # R31: FIX - Corrected the action name from 'setup-build-action' to 'setup-buildx-action'.
       - name: Set up Docker Buildx
-        uses: docker/setup-build-action@v3
+        uses: docker/setup-buildx-action@v3
 
       - name: Build the builder image
         run: docker build -f Dockerfile.builder -t onnx-builder .
@@ -26,30 +27,22 @@ jobs:
         run: docker create --name temp_builder onnx-builder
 
       - name: Copy the /onnx_model artifact from the container
-        # We copy the files to a directory named 'onnx_model' in the root of the repo.
         run: docker cp temp_builder:/onnx_model ./onnx_model
 
-      # --- NEW DIAGNOSTIC AND FIX STEPS ---
-
       - name: Verify that files were copied
-        # This step will show us the exact contents of the new directory.
         run: |
           echo "Listing contents of ./onnx_model:"
           ls -lR ./onnx_model
 
       - name: Configure Git User
-        # The runner needs an identity to make a commit.
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
 
       - name: Add files to commit
-        # Explicitly add the new directory to Git's staging area.
         run: git add onnx_model
 
       - name: Commit and push the ONNX model files
-        # This action will now find the staged files and commit them.
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "feat: Add pre-built ONNX model files"
-          # We no longer need file_pattern because we used `git add` explicitly.
