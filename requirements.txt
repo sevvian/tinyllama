@@ -1,12 +1,13 @@
-# R30: All dependencies are pinned for reproducible builds.
+# R30 (Corrected): All dependencies are pinned to a verified, compatible set of versions.
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
 pydantic==2.7.1
-# R30: Pinning optimum and its dependencies for the runtime.
-optimum[onnxruntime]==1.19.1
-onnx==1.16.1
-onnxruntime==1.18.0
-transformers==4.41.2
+# R30: Use a more recent version of optimum that is compatible with newer transformers.
+optimum==1.20.0
+# R30: We install onnxruntime separately.
+onnxruntime==1.18.1
+# R30: This transformers version is compatible with optimum 1.20.0.
+transformers==4.42.3
 # R30: Pinning other runtime dependencies.
 Jinja2==3.1.4
 numpy==1.26.4
